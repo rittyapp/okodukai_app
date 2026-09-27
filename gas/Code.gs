@@ -24,7 +24,7 @@
  */
 
 // ===================== 設定値 =====================
-const SERVER_VERSION = '3.0.4';
+const SERVER_VERSION = '3.0.5';
 
 // 公開してよい情報のみ。クライアントIDはブラウザに渡る前提の値で、秘密ではない。
 const DEFAULT_OAUTH_CLIENT_ID = '337708567191-tpqbqqinfgm5bpje56ccdj2gmkphdngi.apps.googleusercontent.com';
@@ -459,7 +459,8 @@ function apiGoogleLogin_(ctx) {
   }
   const user = findUserByEmail_(info.email);
   if (!user || !isActive_(user)) {
-    throw new Error('このGoogleアカウント（' + info.email + '）はまだ登録されていません。親に「ユーザー」タブで登録してもらってください。');
+    // この家族に登録されていない人（未登録の家族 or ほかの家庭の人）。画面で「新しく作る」を選べるようにする
+    return { notRegistered: true, email: info.email };
   }
   const token = createSession_(user.UserId);
   if (user.Role === 'parent' && ctx.args.deviceId) {

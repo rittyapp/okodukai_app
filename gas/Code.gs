@@ -23,7 +23,7 @@
  */
 
 // ===================== 設定値 =====================
-const SERVER_VERSION = '3.0.1';
+const SERVER_VERSION = '3.0.3';
 
 // 公開してよい情報のみ。クライアントIDはブラウザに渡る前提の値で、秘密ではない。
 const DEFAULT_OAUTH_CLIENT_ID = '337708567191-tpqbqqinfgm5bpje56ccdj2gmkphdngi.apps.googleusercontent.com';
@@ -674,10 +674,10 @@ function labelOf_(r) {
   return { usage: 'つかった', adjustment: '残高調整', unlock_request: '上限追加のおねがい', bonus: 'ボーナス' }[r.Type] || String(r.Type);
 }
 
+/** 「取り消す」は子供だけ（親は却下を使う） */
 function canCancel_(r, viewer) {
   if (r.Status !== 'pending' && r.Status !== 'approved') return false;
-  if (viewer.Role === 'parent') return true;
-  if (String(r.ChildId) !== viewer.UserId) return false;
+  if (viewer.Role !== 'child' || String(r.ChildId) !== viewer.UserId) return false;
   if (r.Type === 'bonus' || r.Type === 'adjustment') return false;
   // 押した本人だけ取り消せる（旧データは RequestedById が無いので名前で判定）
   return r.RequestedById ? String(r.RequestedById) === viewer.UserId : String(r.RequestedBy) === String(viewer.Name);
@@ -696,8 +696,9 @@ function outRow_(r, viewer, childNames) {
     name: labelOf_(r), status: r.Status, amount: Number(r.Amount) || 0, memo: String(r.Memo || ''),
     requestedBy: String(r.RequestedBy || ''), approvedBy: String(r.ApprovedBy || ''),
     canCancel: canCancel_(r, viewer),
-    // 親は全項目、子供は自分の申請中のお手伝いの日付だけ
-    editMode: isParent && r.Status !== 'cancelled' ? 'full' : (canChildEditDate_(r, viewer) ? 'date' : ''),
+    // 親のボタン：申請中＝承認・却下・編集／承認済み＝却下・編集／却下・取消＝承認（取消は除く）・非表示
+    // 子供：自分が押した申請中のお手伝いの日付だけ
+    editMode: isParent && (r.Status === 'pending' || r.Status === 'approved') ? 'full' : (canChildEditDate_(r, viewer) ? 'date' : ''),
     // 親は「承認済み⇔却下」を何度でも入れ替えられる（間違えて却下した時の再承認）
     canApprove: isParent && (r.Status === 'pending' || r.Status === 'rejected'),
     canReject: isParent && (r.Status === 'pending' || r.Status === 'approved'),
@@ -717,9 +718,13 @@ function balancesByChild_() {
 
 // ===================== ボーナス（月初処理） =====================
 
-function countByDay_(rows) {
+/** 日ごとのお手伝い回数。approvedOnly=true はボーナス計算用（承認済みだけ数える） */
+function countByDay_(rows, approvedOnly) {
   const m = {};
-  rows.forEach(function (r) { if (isCountedChore_(r)) { const d = dayOf_(r.Timestamp); m[d] = (m[d] || 0) + 1; } });
+  rows.forEach(function (r) {
+    const ok = approvedOnly ? r.Type === 'chore' && r.Status === 'approved' : isCountedChore_(r);
+    if (ok) { const d = dayOf_(r.Timestamp); m[d] = (m[d] || 0) + 1; }
+  });
   return m;
 }
 
@@ -748,15 +753,25 @@ function unconfirmedBonusMonths_(rows) {
     const id = String(r.ChoreId || '');
     if (r.Type === 'bonus' && id.indexOf(BONUS_CHORE_PREFIX) === 0) done[id.substring(BONUS_CHORE_PREFIX.length)] = true;
   });
-  const byDay = countByDay_(rows);
+  const byDay = countByDay_(rows, true); // ボーナスは承認済みのお手伝いだけで計算する
+  // その月に承認待ちのお手伝いが残っている間は、その月のボーナスは計算・確認できない
+  const pendingByMonth = {};
+  rows.forEach(function (r) {
+    if (r.Type === 'chore' && r.Status === 'pending') {
+      const ym = dayOf_(r.Timestamp).substring(0, 7);
+      pendingByMonth[ym] = (pendingByMonth[ym] || 0) + 1;
+    }
+  });
   const months = {};
-  Object.keys(byDay).forEach(function (d) {
-    const ym = d.substring(0, 7);
+  Object.keys(byDay).map(function (d) { return d.substring(0, 7); }).concat(Object.keys(pendingByMonth)).forEach(function (ym) {
     if (ym < current && ym >= start && !done[ym]) months[ym] = true;
   });
   return Object.keys(months).sort().map(function (ym) {
+    const label = Number(ym.substring(5)) + '月ボーナス';
+    const pending = pendingByMonth[ym] || 0;
+    if (pending) return { ym: ym, label: label, blocked: true, pending: pending };
     const b = calcMonthBonus_(byDay, ym);
-    return { ym: ym, label: Number(ym.substring(5)) + '月ボーナス', same: b.same, streak: b.streak, amount: b.total };
+    return { ym: ym, label: label, blocked: false, pending: 0, same: b.same, streak: b.streak, amount: b.total };
   });
 }
 
@@ -764,7 +779,11 @@ function apiConfirmBonus_(ctx) {
   const me = requireUser_(ctx.token);
   const child = targetChild_(me, ctx.args.childId);
   const rows = ledgerRows_().filter(function (r) { return String(r.ChildId) === child.UserId; });
-  const months = unconfirmedBonusMonths_(rows);
+  const all = unconfirmedBonusMonths_(rows);
+  const months = all.filter(function (m) { return !m.blocked; });
+  if (!months.length && all.length) {
+    return { message: '承認待ちのお手伝いがあるので、まだボーナスは確認できないよ。', count: 0 };
+  }
   months.forEach(function (m) {
     const next = monthAdd_(m.ym, 1);
     addLedger_({
@@ -931,7 +950,7 @@ function apiEditEntry_(ctx) {
   const me = requireUser_(ctx.token);
   const r = findLedger_(ctx.args.id);
   const isParent = me.Role === 'parent';
-  if (isParent && r.Status === 'cancelled') throw new Error('取消済みの記録は編集できません。');
+  if (isParent && r.Status !== 'pending' && r.Status !== 'approved') throw new Error('却下・取消の記録は編集できません（先に承認してください）。');
   if (!isParent && !canChildEditDate_(r, me)) throw new Error('この記録は編集できません。');
   const a = ctx.args;
   const patch = {};

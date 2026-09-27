@@ -565,7 +565,7 @@ function renderChild() {
 
   const banners = [];
   if (d.bonus.streakActive) banners.push('🔥 ボーナス発生中！ ' + Math.max(d.bonus.streakDays, 3) + '日連続（今日のお手伝いは1回につき+10円、来月1日にまとめてもらえるよ）');
-  if (d.bonus.sameDayActive) banners.push('⭐ 今日はあと1回から「3回目ボーナス」+10円');
+  if (d.bonus.sameDayActive) banners.push('⭐ 今日のつぎのお手伝いから「3回目ボーナス」+10円');
   $('bonusBanner').classList.toggle('hidden', !banners.length);
   $('bonusBanner').innerHTML = banners.map(esc).join('<br>');
 
@@ -706,14 +706,14 @@ function statusTag(st) {
   return '<span class="tag ' + m[1] + '">' + m[0] + '</span>';
 }
 
-function itemHtml(r, opts) {
-  opts = opts || {};
+function itemHtml(r) {
   const acts = [];
   if (!String(r.id).startsWith('tmp_')) {
-    if (r.canApprove) acts.push('<button class="a-approve" data-act="approve">承認</button>', '<button class="a-reject" data-act="reject">却下</button>');
-    if (r.canEdit) acts.push('<button class="a-edit" data-act="edit">編集</button>');
+    // 親は「承認済み⇔却下」を入れ替えられる。却下済みには「再承認」
+    if (r.canApprove) acts.push('<button class="a-approve" data-act="approve">' + (r.status === 'rejected' ? '再承認' : '承認') + '</button>');
+    if (r.canReject) acts.push('<button class="a-reject" data-act="reject">却下</button>');
+    if (r.editMode) acts.push('<button class="a-edit" data-act="edit">' + (r.editMode === 'date' ? '日付を直す' : '編集') + '</button>');
     if (r.canCancel) acts.push('<button class="a-gray" data-act="cancel">取り消す</button>');
-    if (r.canRevert && opts.full) acts.push('<button class="a-gray" data-act="revert">未承認に戻す</button>');
     if (r.canHide) acts.push('<button class="a-gray" data-act="hide">非表示</button>');
   }
   const who = r.requestedBy && (!ME || r.requestedBy !== ME.name) ? ' ・ ' + esc(r.requestedBy) : '';
@@ -741,7 +741,7 @@ async function itemAction(act, r, btn, after) {
   if (act === 'edit') return editEntry(r, after);
   if (act === 'cancel' && !(await dialog('取り消しますか？', '<p>' + esc(r.name) + '（' + signedYen(r.amount) + '）を取り消します。</p>', '取り消す'))) return;
   cool(key, btn);
-  const map = { approve: 'approve', reject: 'reject', cancel: 'cancelEntry', revert: 'revertEntry', hide: 'hideEntry' };
+  const map = { approve: 'approve', reject: 'reject', cancel: 'cancelEntry', hide: 'hideEntry' };
   try {
     const res = await api(map[act], { id: r.id }, uuid());
     toast(res.message);
@@ -758,19 +758,22 @@ async function editEntry(r, after) {
   let dOpts = '';
   for (let i = 1; i <= 12; i++) mOpts += opt(i, month);
   for (let i = 1; i <= 31; i++) dOpts += opt(i, day);
-  const ok = await dialog('記録を編集',
-    '<label>項目</label><input id="fName" maxlength="30" value="' + esc(r.name) + '">' +
-    '<label>金額（円）' + (r.type === 'usage' ? '　※つかった金額' : '') + '</label>' +
-    '<input id="fAmount" type="number" inputmode="numeric" value="' + (r.type === 'usage' ? Math.abs(r.amount) : r.amount) + '">' +
+  const full = r.editMode === 'full'; // 子供は日付だけ直せる
+  const ok = await dialog(full ? '記録を編集' : 'やった日を直す',
+    (full
+      ? '<label>項目</label><input id="fName" maxlength="30" value="' + esc(r.name) + '">' +
+        '<label>金額（円）' + (r.type === 'usage' ? '　※つかった金額' : '') + '</label>' +
+        '<input id="fAmount" type="number" inputmode="numeric" value="' + (r.type === 'usage' ? Math.abs(r.amount) : r.amount) + '">'
+      : '<p>' + esc(r.name) + '（' + signedYen(r.amount) + '）</p>') +
     '<label>日付（' + d.getFullYear() + '年・時刻はそのまま）</label>' +
     '<div class="date-row"><select id="fMonth">' + mOpts + '</select><span>月</span><select id="fDay">' + dOpts + '</select><span>日</span></div>' +
     '<div class="note">メモに「' + esc(ME.name) + '編集済み」と記録されます。</div>',
     '保存');
   if (!ok) return;
   try {
-    const res = await api('editEntry', {
-      id: r.id, name: $('fName').value, amount: $('fAmount').value, month: $('fMonth').value, day: $('fDay').value
-    }, uuid());
+    const args = { id: r.id, month: $('fMonth').value, day: $('fDay').value };
+    if (full) { args.name = $('fName').value; args.amount = $('fAmount').value; }
+    const res = await api('editEntry', args, uuid());
     toast(res.message);
   } catch (e) { fail(e); }
   after();
@@ -780,7 +783,7 @@ function renderHistory() {
   const rows = CHILD.data.history;
   const shown = rows.slice(0, CHILD.historyLimit);
   const el = $('childHistory');
-  el.innerHTML = shown.length ? shown.map((r) => itemHtml(r, { full: CHILD.asParent })).join('') : '<div class="note">まだりれきはありません。</div>';
+  el.innerHTML = shown.length ? shown.map((r) => itemHtml(r)).join('') : '<div class="note">まだりれきはありません。</div>';
   bindItemActions(el, shown, refreshChild);
   $('btnMoreHistory').classList.toggle('hidden', rows.length <= CHILD.historyLimit);
 }
@@ -872,8 +875,8 @@ async function refreshPending() {
     pl.innerHTML = d.pending.length ? d.pending.map((r) => itemHtml(r)).join('') : '<div class="note">今のところ承認待ちはありません。</div>';
     bindItemActions(pl, d.pending, refreshPending);
     const rl = $('recentList');
-    rl.innerHTML = d.recent.length ? d.recent.map((r) => itemHtml(r)).join('') : '<div class="note">まだありません。</div>';
-    bindItemActions(rl, d.recent, refreshPending);
+    rl.innerHTML = d.history.length ? d.history.map((r) => itemHtml(r)).join('') : '<div class="note">まだありません。</div>';
+    bindItemActions(rl, d.history, refreshPending);
   } catch (e) { fail(e); }
 }
 

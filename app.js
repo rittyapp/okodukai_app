@@ -105,8 +105,18 @@ function dialog(title, bodyHtml, okLabel, noCancel) {
     $('dlgBody').innerHTML = bodyHtml || '';
     $('dlgOk').textContent = okLabel || 'OK';
     d.querySelector('button[value="cancel"]').classList.toggle('hidden', !!noCancel);
-    d.returnValue = '';
-    d.onclose = () => resolve(d.returnValue === 'ok');
+    // close イベントに頼らず、ボタン（submit）と Esc キー（cancel）で直接結果を返す
+    // （close イベントが届かないブラウザがあり、OKを押しても何も起きないことがあったため）
+    let done = false;
+    const finish = (ok) => {
+      if (done) return;
+      done = true;
+      if (d.open) d.close();
+      resolve(ok);
+    };
+    $('dlgForm').onsubmit = (e) => { e.preventDefault(); finish(true); };
+    d.querySelector('button[value="cancel"]').onclick = () => finish(false);
+    d.oncancel = (e) => { e.preventDefault(); finish(false); };
     d.showModal();
   });
 }

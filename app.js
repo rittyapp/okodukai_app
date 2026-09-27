@@ -298,6 +298,7 @@ function bindStatic() {
   $('btnGoogle').onclick = () => startGoogleLogin('login');
   $('btnSetup').onclick = () => startGoogleLogin('setup');
   $('btnShowQr').onclick = toggleQr;
+  $('btnCloseQr').onclick = () => $('qrOverlay').classList.add('hidden');
   $('btnChangeApi').onclick = async () => {
     if (!(await dialog('接続先を変更', '<p>この端末の接続先とログイン情報を消して、初期設定の画面に戻ります。</p>', '変更する'))) return;
     clearSession();
@@ -306,7 +307,7 @@ function bindStatic() {
     location.replace(BASE_URL);
   };
   document.addEventListener('keydown', (e) => {
-    if ($('screenLogin').classList.contains('hidden') || $('dlg').open) return;
+    if ($('screenLogin').classList.contains('hidden') || $('dlg').open || !$('qrOverlay').classList.contains('hidden')) return;
     if (/^[0-9]$/.test(e.key)) onKey(e.key);
     else if (e.key === 'Backspace') onKey('del');
     else if (e.key === 'Enter') onKey('ok');
@@ -373,7 +374,7 @@ function showLogin() {
   pinDigits = [];
   renderPinDots();
   $('pinMsg').textContent = '';
-  $('qrBox').classList.add('hidden');
+  $('qrOverlay').classList.add('hidden');
 }
 
 function loginMsg(text, isErr) {
@@ -470,6 +471,7 @@ async function finishGoogleLogin(hash) {
   loginMsg('ログインしています…');
   try {
     const info = await api('googleLogin', { idToken: hash.get('id_token'), deviceId: DEVICE_ID });
+    if (info.notRegistered) { loginMsg(''); offerNewFamily(info.email); return; }
     TOKEN = info.token;
     lsSet('okd_token', info.token);
     loginMsg('');
@@ -478,6 +480,23 @@ async function finishGoogleLogin(hash) {
   } catch (e) {
     loginMsg(e.message, true);
   }
+}
+
+/**
+ * 共有QRで開いた人が、その家族に登録されていないGoogleアカウントでログインしたとき。
+ * 「この家族の人（まだ未登録）」か「ほかの家庭の人」かを選んでもらう。
+ */
+async function offerNewFamily(email) {
+  const go = await dialog('この家族には登録されていないアカウントです',
+    '<p><b>' + esc(email) + '</b> は、この「' + esc(cachedLook().name) + '」には登録されていません。</p>' +
+    '<ul><li><b>この家族の方</b>：親に「ユーザー」タブで登録してもらってから、もう一度ログインしてください。</li>' +
+    '<li><b>ほかのご家庭の方</b>：自分の家族用のおこづかい帳を新しく作れます（この端末の接続先が切り替わります）。</li></ul>',
+    '自分の家族用を新しく作る');
+  if (!go) { loginMsg('この家族の方は、親に登録してもらってからログインしてください。'); return; }
+  clearSession();
+  lsSet('okd_api', null);
+  lsSet('okd_look', null);
+  location.replace(BASE_URL);
 }
 
 async function welcomeAfterSetup() {
@@ -490,14 +509,16 @@ async function welcomeAfterSetup() {
   if (SERVER) SERVER.needsSetup = false;
 }
 
+/** 共有QRを画面いっぱいのカードで表示（アプリ名・アイコン付き。スクショして貼り出せる） */
 function toggleQr() {
-  const box = $('qrBox');
-  box.classList.toggle('hidden');
-  if (box.classList.contains('hidden')) return;
+  const look = cachedLook();
+  $('qrAppName').textContent = look.name;
+  try { $('qrIcon').src = iconPng(look, 128); } catch (e) { $('qrIcon').src = BASE_URL + 'icons/icon.svg'; }
   const el = $('qrCanvas');
   el.innerHTML = '';
-  if (window.QRCode) new QRCode(el, { text: shareUrl(), width: 180, height: 180, colorDark: '#3a2c00', colorLight: '#ffffff' });
+  if (window.QRCode) new QRCode(el, { text: shareUrl(), width: 240, height: 240, colorDark: '#000000', colorLight: '#ffffff' });
   else el.textContent = shareUrl();
+  $('qrOverlay').classList.remove('hidden');
 }
 
 function clearSession() {

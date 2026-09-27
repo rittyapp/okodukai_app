@@ -46,7 +46,8 @@
         <input type="url" id="inputApiUrl" placeholder="https://script.google.com/macros/s/…/exec" autocomplete="off">
         <button class="btn btn-main" id="btnConnect">接続する</button>
       </li>
-      <li>接続できたら、ログイン画面の<b>「初期設定」</b>を押し、スプレッドシートの持ち主のGoogleアカウントでログインします。</li>
+      <li>接続できたら、ログイン画面の<b>「初期設定」</b>を押し、スプレッドシートの持ち主のGoogleアカウントでログインします。
+        <div class="note">※ 現在「Googleでログイン」はテスト公開中です。使う前に、管理者へGmailアドレスを伝えて登録してもらってください（README参照）。</div></li>
     </ol>
     <div class="msg hidden" id="setupMsg"></div>
   </div>
@@ -70,13 +71,23 @@
       <button class="link" id="btnShowQr">共有QRコード</button>
       <span class="version" id="versionText"></span>
     </div>
-    <div class="qr-box hidden" id="qrBox">
-      <div id="qrCanvas"></div>
-      <div class="note">このQRコードを家族の端末で読み取ると、このアプリを開けます。</div>
-      <button class="link" id="btnChangeApi">接続先を変更する</button>
-    </div>
   </div>
 </section>
+
+<!-- ============ 共有QR（スクショ・印刷して貼り出せる大きさ） ============ -->
+<div class="qr-overlay hidden" id="qrOverlay">
+  <div class="qr-card">
+    <img class="qr-icon" id="qrIcon" alt="">
+    <div class="qr-title" id="qrAppName">おこづかい帳</div>
+    <div id="qrCanvas"></div>
+    <div class="qr-caption">スマホのカメラで読み取ってね</div>
+    <div class="note">開いたページを「ホーム画面に追加」すると、アプリのように使えます。</div>
+    <div class="qr-actions">
+      <button class="link" id="btnChangeApi">接続先を変更する</button>
+      <button class="btn btn-main" id="btnCloseQr">とじる</button>
+    </div>
+  </div>
+</div>
 
 <!-- ============ 子供画面（子供本人／親が子の画面を開いたとき） ============ -->
 <section id="screenChild" class="screen hidden">

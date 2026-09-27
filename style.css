@@ -23,6 +23,9 @@ body {
   -webkit-tap-highlight-color: transparent;
 }
 button { font-family: inherit; }
+/* iPhoneで数字を続けてタップしたときに画面が拡大されないようにする（ダブルタップ拡大を止める） */
+html, button, input, select, .keypad { touch-action: manipulation; }
+.keypad, .keypad button, .chore-btn { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
 .hidden { display: none !important; }
 .screen { max-width: 520px; margin: 0 auto; padding: 12px 16px 40px; }
 .loading { text-align: center; padding: 40vh 0; color: var(--sub); }
@@ -75,8 +78,15 @@ button:disabled { opacity: .6; cursor: default; }
 .keypad .key-ok { font-size: clamp(14px, 4vw, 17px); color: #fff; background: var(--main); box-shadow: 0 3px 0 var(--main-dark); }
 .login-foot { display: flex; justify-content: space-between; align-items: center; width: min(100%, 320px); margin-top: 10px; }
 .version { font-size: 11px; color: #aaa; }
-.qr-box { text-align: center; background: #fff; border-radius: 16px; padding: 14px; margin-top: 8px; width: min(100%, 320px); }
-.qr-box #qrCanvas { display: flex; justify-content: center; }
+/* 共有QR：画面いっぱいのカード。スクショして印刷・貼り出ししても読みやすいように */
+.qr-overlay { position: fixed; inset: 0; background: var(--bg); z-index: 40; display: flex; align-items: center; justify-content: center; padding: 16px; overflow-y: auto; }
+.qr-card { background: #fff; border-radius: 24px; box-shadow: 0 4px 16px rgba(0,0,0,.08); padding: 24px 20px 16px; width: min(100%, 360px); text-align: center; }
+.qr-icon { width: 64px; height: 64px; border-radius: 16px; display: block; margin: 0 auto 8px; }
+.qr-title { font-size: 26px; font-weight: bold; margin-bottom: 14px; word-break: break-all; }
+.qr-card #qrCanvas { display: flex; justify-content: center; padding: 10px; border: 3px solid var(--accent); border-radius: 16px; width: fit-content; margin: 0 auto; }
+.qr-caption { font-size: 17px; font-weight: bold; margin-top: 14px; }
+.qr-actions { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 14px; }
+.qr-actions .btn { width: auto; padding: 10px 24px; margin-top: 0; }
 
 /* ---------- 共通UI ---------- */
 .topbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; gap: 8px; min-height: 32px; }
@@ -94,7 +104,7 @@ button:disabled { opacity: .6; cursor: default; }
 .check input { width: auto; margin: 0; }
 .steps { padding-left: 20px; line-height: 1.6; font-size: 14px; }
 .steps li { margin-bottom: 14px; }
-.steps input { width: 100%; padding: 10px; border-radius: 10px; border: 1px solid #ccc; font-size: 14px; margin-top: 6px; }
+.steps input { width: 100%; padding: 10px; border-radius: 10px; border: 1px solid #ccc; font-size: 16px; margin-top: 6px; }
 
 /* ---------- お手伝いボタン ---------- */
 .chore-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 10px; }

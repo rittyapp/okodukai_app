@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#ffb43d">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="おこづかい帳" id="metaAppleTitle">
+<title>おこづかい帳</title>
+<link rel="manifest" href="manifest.json" id="linkManifest">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/icon.svg">
+<link rel="stylesheet" href="style.css">
+<script src="config.js"></script>
+<script>
+  // ?demo=1 のときだけ、ブラウザ内で動くお試し用のサーバーを読み込む
+  if (/[?&]demo=1/.test(location.search)) document.write('<script src="demo/mock.js"><\/script>');
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js" defer></script>
+<script src="app.js" defer></script>
+</head>
+<body>
+
+<div id="loading" class="loading">よみこみ中…</div>
+
+<!-- ============ 初期設定（接続先が未登録のとき） ============ -->
+<section id="screenSetup" class="screen hidden">
+  <h1 class="app-title">🐷 おこづかい帳 はじめかた</h1>
+  <div class="card">
+    <p>このアプリは、<b>あなたのGoogleスプレッドシート</b>にデータを保存します。最初に親が1回だけ準備します（無料）。</p>
+    <ol class="steps">
+      <li>
+        <b>原本スプレッドシートをコピー</b><br>
+        <button class="btn btn-main" id="btnCopyTemplate">原本をコピーする</button>
+        <div class="note" id="templateNote"></div>
+      </li>
+      <li>
+        <b>ウェブアプリとして公開</b><br>
+        コピーしたスプレッドシートで「拡張機能」→「Apps Script」→「デプロイ」→「新しいデプロイ」→ 種類「ウェブアプリ」、
+        実行ユーザー「自分」、アクセス「全員」でデプロイし、表示される許可をすべて承認します。
+        <b>/exec で終わるURL</b>をコピーします。
+      </li>
+      <li>
+        <b>URLを貼り付けて接続</b>
+        <input type="url" id="inputApiUrl" placeholder="https://script.google.com/macros/s/…/exec" autocomplete="off">
+        <button class="btn btn-main" id="btnConnect">接続する</button>
+      </li>
+      <li>接続できたら、ログイン画面の<b>「初期設定」</b>を押し、スプレッドシートの持ち主のGoogleアカウントでログインします。</li>
+    </ol>
+    <div class="msg hidden" id="setupMsg"></div>
+  </div>
+  <p class="note center">家族から共有QRコードを受け取った人は、それを読み取るだけで使えます。</p>
+</section>
+
+<!-- ============ ログイン画面 ============ -->
+<section id="screenLogin" class="screen hidden">
+  <div class="login">
+    <h1 class="app-title" id="loginAppName">おこづかい帳</h1>
+    <div class="pin-dots" id="pinDots"><span></span><span></span><span></span><span></span></div>
+    <div class="msg-inline" id="pinMsg"></div>
+    <div class="keypad" id="keypad"></div>
+    <button class="btn btn-google" id="btnGoogle">
+      <svg viewBox="0 0 48 48" width="20" height="20" aria-hidden="true"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-8l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z"/></svg>
+      Googleでログイン
+    </button>
+    <button class="btn btn-setup hidden" id="btnSetup">⚙ 初期設定（スプレッドシートの持ち主）</button>
+    <div class="msg hidden" id="loginMsg"></div>
+    <div class="login-foot">
+      <button class="link" id="btnShowQr">共有QRコード</button>
+      <span class="version" id="versionText"></span>
+    </div>
+    <div class="qr-box hidden" id="qrBox">
+      <div id="qrCanvas"></div>
+      <div class="note">このQRコードを家族の端末で読み取ると、このアプリを開けます。</div>
+      <button class="link" id="btnChangeApi">接続先を変更する</button>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 子供画面（子供本人／親が子の画面を開いたとき） ============ -->
+<section id="screenChild" class="screen hidden">
+  <div class="topbar">
+    <button class="link hidden" id="btnBackToParent">← 親の画面へ戻る</button>
+    <span class="name" id="childName"></span>
+    <button class="link" id="btnChildLogout">ログアウト</button>
+  </div>
+  <div class="tabbar">
+    <button data-tab="log" class="active">きろく</button>
+    <button data-tab="cal">カレンダー</button>
+  </div>
+
+  <div class="pane" id="childPaneLog">
+    <div class="balance-card">
+      <div class="balance-label">いまの残高</div>
+      <div class="balance-amount" id="childBalance">-</div>
+    </div>
+
+    <div class="bonus-card hidden" id="bonusConfirmBox">
+      <div id="bonusConfirmText"></div>
+      <button class="btn btn-main" id="btnConfirmBonus">🎁 ボーナスを確認</button>
+    </div>
+
+    <div class="section-title">おてつだいボタン</div>
+    <div class="bonus-banner hidden" id="bonusBanner"></div>
+    <div class="chore-grid" id="choreGrid"></div>
+    <div class="parent-only hidden" id="choreEditBar">
+      <button class="btn btn-sub" id="btnChoreEdit">✏ お手伝い編集</button>
+    </div>
+
+    <div class="limit-box hidden" id="limitBox">
+      きょうはもう上限だよ。もっとやりたい時は親におねがいしてみよう。
+      <button class="btn btn-main" id="btnRequestUnlock">親に追加をおねがいする</button>
+    </div>
+
+    <div class="parent-only hidden" id="adjustBox">
+      <div class="section-title">残高調整（親だけ）</div>
+      <div class="form">
+        <input type="number" id="adjAmount" placeholder="金額（マイナスもOK）" inputmode="numeric">
+        <input type="text" id="adjMemo" placeholder="内容（例：10月分おこづかい）">
+        <button class="btn btn-main" id="btnAdjust">残高を調整する</button>
+      </div>
+    </div>
+
+    <div class="section-title">つかったきろく</div>
+    <div class="form">
+      <input type="number" id="usageAmount" placeholder="つかった金額（円）" inputmode="numeric" min="1">
+      <input type="text" id="usageMemo" placeholder="なににつかった？">
+      <button class="btn btn-main" id="btnUsage">きろくする</button>
+    </div>
+
+    <div class="section-title">りれき</div>
+    <div id="childHistory"></div>
+    <button class="btn btn-sub hidden" id="btnMoreHistory">もっと見る</button>
+  </div>
+
+  <div class="pane hidden" id="childPaneCal">
+    <div class="cal-head">
+      <button class="cal-nav" id="calPrev" aria-label="前の月">◀</button>
+      <span id="calTitle"></span>
+      <button class="cal-nav" id="calNext" aria-label="次の月">▶</button>
+    </div>
+    <div class="cal-grid" id="calGrid"></div>
+    <div class="cal-legend">
+      <span><i class="lg lg1"></i>お手伝いした日</span>
+      <span><i class="lg lg3"></i>3回以上した日</span>
+    </div>
+    <div id="calDetail"></div>
+  </div>
+</section>
+
+<!-- ============ 親画面 ============ -->
+<section id="screenParent" class="screen hidden">
+  <div class="topbar">
+    <span class="name" id="parentName"></span>
+    <button class="link" id="btnParentLogout">ログアウト</button>
+  </div>
+  <div class="tabbar">
+    <button data-tab="pending" class="active">承認待ち</button>
+    <button data-tab="users">ユーザー</button>
+    <button data-tab="settings">設定</button>
+  </div>
+
+  <div class="pane" id="parentPanePending">
+    <div class="section-title">承認待ち</div>
+    <div id="pendingList"></div>
+    <div class="section-title">最近承認したもの</div>
+    <div id="recentList"></div>
+  </div>
+
+  <div class="pane hidden" id="parentPaneUsers">
+    <div class="me-card">ログイン中：<b id="usersMe"></b></div>
+    <div class="section-title">子供</div>
+    <div id="childrenList"></div>
+    <div class="section-title">ほかの親</div>
+    <div id="parentsList"></div>
+    <div class="section-title">ユーザー変更</div>
+    <div class="form card">
+      <select id="uSelect"></select>
+      <input type="text" id="uName" placeholder="表示名">
+      <select id="uRole"><option value="child">子供</option><option value="parent">親</option></select>
+      <input type="email" id="uEmail" placeholder="Googleアカウントのメール（親は必須／子供は任意）">
+      <input type="text" id="uPin" placeholder="4桁PIN（子供のみ。空欄なら変更しない）" inputmode="numeric" maxlength="4">
+      <label class="check"><input type="checkbox" id="uActive" checked> 有効</label>
+      <button class="btn btn-main" id="btnSaveUser">保存する</button>
+    </div>
+  </div>
+
+  <div class="pane hidden" id="parentPaneSettings">
+    <div class="section-title">スプレッドシート</div>
+    <button class="btn btn-sub" id="btnOpenSheet">📄 スプレッドシートへ移動</button>
+
+    <div class="section-title">アプリ名の変更</div>
+    <div class="form">
+      <input type="text" id="appNameInput" maxlength="30">
+      <button class="btn btn-main" id="btnSaveAppName">変更する</button>
+      <div class="note">変更後にホーム画面へ追加したショートカットに新しい名前が使われます（追加済みのものは作り直してください）。</div>
+    </div>
+
+    <div class="section-title">PINロック端末</div>
+    <div id="deviceList"></div>
+    <div class="note">ロック中でも子供の画面には「ちがいます」としか出ません。最近1か月の端末を表示します。</div>
+
+    <div class="section-title">メンテナンス</div>
+    <button class="btn btn-sub" id="btnRepair">🛠 初期設定（シートの修復）</button>
+    <div class="note" id="settingsVersion"></div>
+  </div>
+</section>
+
+<!-- ============ 汎用ダイアログ ============ -->
+<dialog id="dlg">
+  <form method="dialog" id="dlgForm">
+    <h3 id="dlgTitle"></h3>
+    <div id="dlgBody"></div>
+    <div class="dlg-buttons">
+      <button value="cancel" class="btn btn-sub" formnovalidate>やめる</button>
+      <button value="ok" class="btn btn-main" id="dlgOk">OK</button>
+    </div>
+  </form>
+</dialog>
+
+</body>
+</html>

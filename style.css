@@ -1,0 +1,177 @@
+:root {
+  --bg: #fdf6ec;
+  --card: #ffffff;
+  --text: #333333;
+  --sub: #888888;
+  --main: #6fb98f;
+  --main-dark: #4f9a70;
+  --accent: #ffd35c;
+  --accent-shadow: #e0ac00;
+  --orange: #e07b00;
+  --plus: #2a8c4a;
+  --minus: #d1483f;
+  --line: #e6e0d6;
+  --cal1: #cdebd6;
+  --cal3: #ffcc66;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  font-family: "Hiragino Maru Gothic ProN", "Rounded Mplus 1c", "Meiryo", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  -webkit-tap-highlight-color: transparent;
+}
+button { font-family: inherit; }
+.hidden { display: none !important; }
+.screen { max-width: 520px; margin: 0 auto; padding: 12px 16px 40px; }
+.loading { text-align: center; padding: 40vh 0; color: var(--sub); }
+.center { text-align: center; }
+.note { font-size: 12px; color: var(--sub); margin-top: 6px; line-height: 1.5; }
+.card, .balance-card, .me-card {
+  background: var(--card); border-radius: 18px; box-shadow: 0 3px 10px rgba(0,0,0,.07);
+  padding: 16px; margin-bottom: 14px;
+}
+.app-title { font-size: 22px; text-align: center; margin: 8px 0 12px; }
+.section-title { font-size: 15px; font-weight: bold; margin: 18px 0 8px; }
+.msg { background: #eef7ff; border-radius: 10px; padding: 10px; font-size: 13px; margin-top: 10px; white-space: pre-wrap; }
+.msg.err { background: #fde8e6; color: #9c2f2f; }
+
+/* ---------- ボタン ---------- */
+.btn {
+  display: block; width: 100%; border: none; border-radius: 14px; padding: 14px;
+  font-size: 16px; font-weight: bold; margin-top: 8px; cursor: pointer; position: relative;
+}
+.btn-main { background: var(--main); color: #fff; }
+.btn-sub { background: transparent; color: #666; border: 1px solid #ccc; font-weight: normal; font-size: 14px; }
+.btn-google { background: #fff; color: #333; border: 1px solid #dadce0; display: flex; align-items: center; justify-content: center; gap: 10px; }
+.btn-setup { background: #fff3d6; color: #7a5200; font-size: 14px; }
+.link { background: none; border: none; color: var(--sub); text-decoration: underline; font-size: 13px; cursor: pointer; padding: 4px; }
+/* 二重押し防止中（押してから数秒）の見た目 */
+.cooling { filter: brightness(.55) grayscale(.4); pointer-events: none; }
+button:disabled { opacity: .6; cursor: default; }
+
+/* ---------- ログイン ---------- */
+.login { display: flex; flex-direction: column; align-items: center; min-height: calc(100dvh - 52px); justify-content: center; }
+.login .btn { max-width: 320px; }
+.pin-dots { display: flex; gap: 14px; margin: 4px 0 6px; }
+.pin-dots span { width: 16px; height: 16px; border-radius: 50%; background: #ddd; }
+.pin-dots span.filled { background: var(--orange); }
+.msg-inline { min-height: 20px; font-size: 13px; color: var(--minus); margin-bottom: 6px; text-align: center; }
+/* 4行×3列。1つのキーは正方形。画面の高さに合わせて縮み、PCでも320pxを超えない */
+.keypad {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px;
+  width: min(100%, 320px);
+  width: min(100%, 320px, max(210px, calc((100dvh - 340px) * 0.75)));
+  margin-bottom: 8px;
+}
+.keypad button {
+  aspect-ratio: 1 / 1; border: none; border-radius: 18px; background: #fff;
+  font-size: clamp(20px, 6vw, 28px); font-weight: bold; color: var(--text);
+  box-shadow: 0 3px 0 #d8d2c6; cursor: pointer; padding: 0;
+}
+.keypad button:active { transform: translateY(2px); box-shadow: none; }
+.keypad .key-del { font-size: clamp(14px, 4vw, 17px); color: #666; background: #f3efe8; }
+.keypad .key-ok { font-size: clamp(14px, 4vw, 17px); color: #fff; background: var(--main); box-shadow: 0 3px 0 var(--main-dark); }
+.login-foot { display: flex; justify-content: space-between; align-items: center; width: min(100%, 320px); margin-top: 10px; }
+.version { font-size: 11px; color: #aaa; }
+.qr-box { text-align: center; background: #fff; border-radius: 16px; padding: 14px; margin-top: 8px; width: min(100%, 320px); }
+.qr-box #qrCanvas { display: flex; justify-content: center; }
+
+/* ---------- 共通UI ---------- */
+.topbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; gap: 8px; min-height: 32px; }
+.topbar .name { font-weight: bold; flex: 1; text-align: center; }
+.tabbar { display: flex; gap: 6px; margin-bottom: 12px; }
+.tabbar button { flex: 1; padding: 10px 4px; border: none; background: #eee; font-weight: bold; border-radius: 10px; font-size: 14px; cursor: pointer; }
+.tabbar button.active { background: var(--accent); }
+.balance-card { text-align: center; }
+.balance-label { font-size: 13px; color: var(--sub); }
+.balance-amount { font-size: 40px; font-weight: bold; color: var(--orange); }
+.form input, .form select, #dlgBody input, #dlgBody select {
+  width: 100%; padding: 11px; border-radius: 10px; border: 1px solid #ccc; font-size: 16px; margin-top: 6px; background: #fff;
+}
+.check { display: flex; align-items: center; gap: 6px; font-size: 14px; margin-top: 8px; }
+.check input { width: auto; margin: 0; }
+.steps { padding-left: 20px; line-height: 1.6; font-size: 14px; }
+.steps li { margin-bottom: 14px; }
+.steps input { width: 100%; padding: 10px; border-radius: 10px; border: 1px solid #ccc; font-size: 14px; margin-top: 6px; }
+
+/* ---------- お手伝いボタン ---------- */
+.chore-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 10px; }
+.chore-btn {
+  background: var(--accent); border: none; border-radius: 16px; padding: 16px 8px; min-height: 72px;
+  font-size: 16px; font-weight: bold; box-shadow: 0 3px 0 var(--accent-shadow); cursor: pointer; position: relative;
+}
+.chore-btn:active { transform: translateY(2px); box-shadow: none; }
+.chore-btn small { display: block; font-size: 12px; font-weight: normal; margin-top: 4px; }
+.chore-btn.add { background: #fff; border: 2px dashed #ccc; box-shadow: none; color: #888; }
+.chore-tools { position: absolute; top: 4px; right: 4px; display: flex; gap: 4px; }
+.chore-tools span { background: rgba(255,255,255,.9); border-radius: 8px; padding: 2px 6px; font-size: 13px; }
+.editing .chore-btn:not(.add) { box-shadow: 0 0 0 2px #7a5200 inset; }
+.bonus-banner { background: linear-gradient(90deg, #ffe08a, #ffc46b); border-radius: 12px; padding: 10px 12px; font-weight: bold; margin-bottom: 10px; font-size: 14px; }
+.bonus-card { background: #fff6dc; border: 2px solid #ffd35c; border-radius: 16px; padding: 14px; margin-bottom: 14px; font-size: 14px; }
+.limit-box { background: #fff3d6; border-radius: 14px; padding: 12px; text-align: center; margin-top: 12px; font-size: 14px; }
+
+/* ---------- 履歴 ---------- */
+.item { background: #fff; border-radius: 14px; padding: 11px 13px; margin-bottom: 8px; box-shadow: 0 2px 6px rgba(0,0,0,.05); }
+.item.st-approved { border-left: 5px solid #8fd0a4; }
+.item.st-pending { border-left: 5px solid #ffc75a; }
+.item.st-rejected, .item.st-cancelled { border-left: 5px solid #ccc; opacity: .7; }
+.item .r1 { display: flex; justify-content: space-between; font-weight: bold; gap: 8px; }
+.item .r2 { font-size: 12px; color: var(--sub); margin-top: 3px; }
+.item .acts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.item .acts button { padding: 7px 12px; border-radius: 10px; border: none; font-weight: bold; font-size: 13px; cursor: pointer; }
+.a-approve { background: var(--main); color: #fff; }
+.a-reject { background: var(--minus); color: #fff; }
+.a-edit { background: #5b8def; color: #fff; }
+.a-gray { background: #999; color: #fff; }
+.plus { color: var(--plus); }
+.minus { color: var(--minus); }
+.tag { display: inline-block; font-size: 11px; padding: 1px 8px; border-radius: 10px; margin-left: 4px; }
+.tag-pending { background: #ffe6b3; color: #92600a; }
+.tag-approved { background: #dff2e2; color: #1f7a3d; }
+.tag-rejected { background: #f3d6d6; color: #9c2f2f; }
+.tag-cancelled { background: #e3e3e3; color: #777; }
+
+/* ---------- ユーザー ---------- */
+.user-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.user-row .who { flex: 1; min-width: 0; }
+.user-row .who small { display: block; color: var(--sub); font-size: 12px; overflow: hidden; text-overflow: ellipsis; }
+.user-row .bal { font-weight: bold; color: var(--orange); white-space: nowrap; }
+.user-acts { display: flex; gap: 6px; margin-top: 8px; }
+.user-acts button { flex: 1; padding: 9px; border-radius: 10px; border: none; font-weight: bold; cursor: pointer; }
+.btn-small { padding: 9px 14px; border-radius: 10px; border: none; font-weight: bold; cursor: pointer; }
+
+/* ---------- カレンダー（月曜始まり） ---------- */
+.cal-head { display: flex; justify-content: space-between; align-items: center; font-weight: bold; font-size: 17px; margin-bottom: 8px; }
+.cal-nav { border: none; background: #fff; border-radius: 10px; width: 44px; height: 38px; font-size: 16px; cursor: pointer; box-shadow: 0 2px 4px rgba(0,0,0,.06); }
+.cal-nav:disabled { opacity: .25; }
+.cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+.cal-grid .dow { text-align: center; font-size: 12px; color: var(--sub); padding: 4px 0; }
+.cal-grid .dow.sat { color: #3b6fd1; } .cal-grid .dow.sun { color: var(--minus); }
+.cal-day { aspect-ratio: 1 / 1; border: none; background: #fff; border-radius: 10px; font-size: 14px; cursor: pointer; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+.cal-day small { font-size: 10px; color: #666; }
+.cal-day.d1 { background: var(--cal1); }
+.cal-day.d3 { background: var(--cal3); font-weight: bold; }
+.cal-day.today { box-shadow: 0 0 0 2px var(--orange) inset; }
+.cal-day.sel { outline: 3px solid #5b8def; }
+.cal-day.future { background: transparent; color: #ccc; cursor: default; }
+.cal-day.blank { background: transparent; cursor: default; }
+.cal-legend { display: flex; gap: 16px; font-size: 12px; color: var(--sub); margin: 10px 0; }
+.lg { display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 4px; vertical-align: -1px; }
+.lg1 { background: var(--cal1); } .lg3 { background: var(--cal3); }
+
+/* ---------- トースト・ダイアログ ---------- */
+.toast {
+  position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); max-width: 90%;
+  background: rgba(40,40,40,.92); color: #fff; padding: 10px 16px; border-radius: 12px; font-size: 14px; z-index: 50;
+}
+.toast.err { background: rgba(170,40,40,.95); }
+dialog { border: none; border-radius: 18px; padding: 18px; width: min(92vw, 400px); }
+dialog::backdrop { background: rgba(0,0,0,.35); }
+dialog h3 { margin: 0 0 8px; font-size: 17px; }
+.dlg-buttons { display: flex; gap: 8px; margin-top: 12px; }
+.dlg-buttons .btn { margin-top: 0; }
+.date-row { display: flex; gap: 8px; }
+.date-row select { flex: 1; }
+#dlgBody label { display: block; font-size: 13px; color: #666; margin-top: 8px; }

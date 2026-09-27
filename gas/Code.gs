@@ -13,6 +13,7 @@
  *   APP_NAME            … アプリ名。親の「設定」タブから変更する（直接編集も可）。
  *   APP_ICON            … アイコン {"emoji":"🐷","color":"#ffd35c"}。親の「設定」タブから変更する。
  *   BONUS_START_MONTH   … 月初ボーナスを計算し始める月（yyyy-MM）。初期設定時に自動で入る。
+ *   PIN_GLOBAL_LOCK_UNTIL … 全体PINロックの解除時刻（ミリ秒）。自動で入る。消すと解除（設定タブからも解除可）。
  *   sess_<token>        … ログインセッション。自動で作成・削除される（手で触らない）。
  *
  * ── シート ──
@@ -23,7 +24,7 @@
  */
 
 // ===================== 設定値 =====================
-const SERVER_VERSION = '3.0.3';
+const SERVER_VERSION = '3.0.4';
 
 // 公開してよい情報のみ。クライアントIDはブラウザに渡る前提の値で、秘密ではない。
 const DEFAULT_OAUTH_CLIENT_ID = '337708567191-tpqbqqinfgm5bpje56ccdj2gmkphdngi.apps.googleusercontent.com';
@@ -66,6 +67,11 @@ const LOCK_STAGE1_COUNT = 3;  const LOCK_STAGE1_MS = 60 * 1000;
 const LOCK_STAGE2_COUNT = 6;  const LOCK_STAGE2_MS = 5 * 60 * 1000;
 const LOCK_STAGE3_COUNT = 10; // 完全ロック（親のGoogleログイン or 設定タブで解除）
 const WRONG_PIN_MESSAGE = 'ちがいます。もういちどためしてね。';
+// 端末に関係なく、全体でPINの失敗が続いたら一定時間すべてのPINログインを止める
+// （ブラウザの情報を消して端末を変えながら総当たりされるのを防ぐ）
+const GLOBAL_FAIL_LIMIT = 20;               // 失敗がこの回数に達したら…
+const GLOBAL_FAIL_WINDOW_S = 600;           // （前の失敗から10分以内に続いた失敗を数える）
+const GLOBAL_LOCK_MS = 30 * 60 * 1000;      // …30分間、全端末のPINログインを止める（親は設定タブで解除可）
 const DEVICE_MAX_ROWS = 30;         // これを超えた古い端末行は黙って削除
 const DEVICE_RECENT_DAYS = 30;      // 設定タブに出す期間。0件なら最新3端末を出す
 
@@ -467,8 +473,8 @@ function apiPinLogin_(ctx) {
   if (!deviceId) throw new Error('端末情報が取得できませんでした。ページを再読み込みしてください。');
   const state = getDeviceState_(deviceId);
   const locked = isTrue_(state.HardLocked) || (state.LockUntil && Number(state.LockUntil) > Date.now());
-  // ロック中は正解でも同じ文言を返す（ロック中であることを悟らせない）
-  if (locked) return { ok: false, message: WRONG_PIN_MESSAGE };
+  // ロック中（端末 or 全体）は正解でも同じ文言を返す（ロック中であることを悟らせない）
+  if (locked || globalPinLockUntil_()) return { ok: false, message: WRONG_PIN_MESSAGE };
 
   const user = findUserByPin_(ctx.args.pin);
   if (user) {
@@ -482,7 +488,25 @@ function apiPinLogin_(ctx) {
   else if (fails >= LOCK_STAGE2_COUNT) until = Date.now() + LOCK_STAGE2_MS;
   else if (fails >= LOCK_STAGE1_COUNT) until = Date.now() + LOCK_STAGE1_MS;
   saveDeviceState_(deviceId, { FailCount: fails, LockUntil: until, HardLocked: hard });
+  countGlobalPinFail_();
   return { ok: false, message: WRONG_PIN_MESSAGE };
+}
+
+/** 全体ロックの解除時刻（ロック中でなければ 0） */
+function globalPinLockUntil_() {
+  const until = Number(props_().getProperty('PIN_GLOBAL_LOCK_UNTIL') || 0);
+  return until > Date.now() ? until : 0;
+}
+
+function countGlobalPinFail_() {
+  const cache = CacheService.getScriptCache();
+  const n = Number(cache.get('pin_fail_global') || 0) + 1;
+  if (n >= GLOBAL_FAIL_LIMIT) {
+    props_().setProperty('PIN_GLOBAL_LOCK_UNTIL', String(Date.now() + GLOBAL_LOCK_MS));
+    cache.remove('pin_fail_global');
+  } else {
+    cache.put('pin_fail_global', String(n), GLOBAL_FAIL_WINDOW_S);
+  }
 }
 
 function apiResume_(ctx) {
@@ -1015,7 +1039,11 @@ function apiAddAdjustment_(ctx) {
 
 function apiSettings_(ctx) {
   requireUser_(ctx.token, 'parent');
-  return { appName: appName_(), appIcon: appIcon_(), spreadsheetUrl: ss_().getUrl(), devices: listDevices_(), version: SERVER_VERSION };
+  const g = globalPinLockUntil_();
+  return {
+    appName: appName_(), appIcon: appIcon_(), spreadsheetUrl: ss_().getUrl(), devices: listDevices_(),
+    globalLockUntil: g ? new Date(g).toISOString() : '', version: SERVER_VERSION
+  };
 }
 
 /** アプリ名とアイコン（絵文字＋背景色）を保存。画面側がショートカット用の情報に反映する */
@@ -1032,8 +1060,14 @@ function apiSetAppName_(ctx) {
   return { appName: name, appIcon: appIcon_() };
 }
 
+/** 端末ロックの解除。deviceId が '*' のときは全体ロックを解除する */
 function apiUnlockDevice_(ctx) {
   requireUser_(ctx.token, 'parent');
+  if (ctx.args.deviceId === '*') {
+    props_().deleteProperty('PIN_GLOBAL_LOCK_UNTIL');
+    CacheService.getScriptCache().remove('pin_fail_global');
+    return { message: '全体のPINロックを解除しました。' };
+  }
   saveDeviceState_(ctx.args.deviceId, { FailCount: 0, LockUntil: '', HardLocked: false });
   return { message: 'ロックを解除しました。' };
 }

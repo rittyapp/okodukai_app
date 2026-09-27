@@ -746,7 +746,7 @@ function bindItemActions(container, rows, after) {
 }
 
 async function itemAction(act, r, btn, after) {
-  const key = 'item_' + r.id;
+  const key = 'item_' + r.id + '_' + act; // 同じボタンの二重押しだけ防ぐ（却下→再承認はすぐできる）
   if (isCooling(key)) return;
   if (act === 'edit') return editEntry(r, after);
   if (act === 'cancel' && !(await dialog('取り消しますか？', '<p>' + esc(r.name) + '（' + signedYen(r.amount) + '）を取り消します。</p>', '取り消す'))) return;

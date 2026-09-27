@@ -961,12 +961,18 @@ async function refreshSettings() {
     ensureIconFields(s.appIcon || {});
     $('settingsVersion').textContent = 'アプリ v' + CFG.VERSION + ' / サーバー v' + s.version;
     const el = $('deviceList');
-    el.innerHTML = s.devices.length ? s.devices.map((d) => {
+    // 全体ロック（端末を変えながらの総当たり対策）が働いているとき
+    const globalHtml = s.globalLockUntil
+      ? '<div class="item st-rejected" style="opacity:1"><div class="r1"><span>⚠ 全体のPINロック中</span></div>' +
+        '<div class="r2">PINの失敗が続いたため、' + fmtDateTime(s.globalLockUntil) + 'まで全員のPINログインを止めています。</div>' +
+        '<div class="acts"><button class="a-approve" data-dev="*">全体ロックを解除する</button></div></div>'
+      : '';
+    el.innerHTML = globalHtml + (s.devices.length ? s.devices.map((d) => {
       const state = d.hardLocked ? '完全ロック' : d.locked ? '一時ロック（' + fmtDateTime(d.lockedUntil) + 'まで）' : 'ロックなし';
       return '<div class="item"><div class="r1"><span>端末 ' + esc(d.shortId) + '…</span><span>' + state + '</span></div>' +
         '<div class="r2">失敗 ' + d.failCount + '回 ・ 最終 ' + fmtDateTime(d.updatedAt) + '</div>' +
         (d.locked || d.failCount ? '<div class="acts"><button class="a-approve" data-dev="' + esc(d.deviceId) + '">解除する</button></div>' : '') + '</div>';
-    }).join('') : '<div class="note">記録はありません。</div>';
+    }).join('') : '<div class="note">記録はありません。</div>');
     el.querySelectorAll('[data-dev]').forEach((b) => {
       b.onclick = async () => {
         cool('dev', b);

@@ -566,11 +566,16 @@ function renderChild() {
   $('childBalance').textContent = yen(d.balance);
 
   // 月初ボーナスの確認
+  // 承認待ちが残っている月（blocked）はまだ確認できない
   const months = d.bonus.pendingMonths;
+  const ready = months.filter((m) => !m.blocked);
   $('bonusConfirmBox').classList.toggle('hidden', !months.length);
+  $('btnConfirmBonus').classList.toggle('hidden', !ready.length);
   if (months.length) {
-    $('bonusConfirmText').innerHTML = '<b>ボーナスがとどいているよ！</b><br>' +
-      months.map((m) => esc(m.label) + '：' + yen(m.amount)).join('<br>');
+    $('bonusConfirmText').innerHTML = '<b>' + (ready.length ? 'ボーナスがとどいているよ！' : 'ボーナスはまだ確認できないよ') + '</b><br>' +
+      months.map((m) => esc(m.label) + '：' + (m.blocked
+        ? '承認待ちが' + m.pending + '件あるので、親の承認のあとで確認できるよ'
+        : yen(m.amount))).join('<br>');
   }
 
   const banners = [];

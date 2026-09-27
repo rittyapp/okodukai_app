@@ -23,7 +23,7 @@
  */
 
 // ===================== 設定値 =====================
-const SERVER_VERSION = '3.0.0';
+const SERVER_VERSION = '3.0.1';
 
 // 公開してよい情報のみ。クライアントIDはブラウザに渡る前提の値で、秘密ではない。
 const DEFAULT_OAUTH_CLIENT_ID = '337708567191-tpqbqqinfgm5bpje56ccdj2gmkphdngi.apps.googleusercontent.com';
@@ -683,6 +683,12 @@ function canCancel_(r, viewer) {
   return r.RequestedById ? String(r.RequestedById) === viewer.UserId : String(r.RequestedBy) === String(viewer.Name);
 }
 
+/** 子供は、自分が押した申請中のお手伝いの「日付だけ」を直せる */
+function canChildEditDate_(r, viewer) {
+  return viewer.Role === 'child' && r.Type === 'chore' && r.Status === 'pending' &&
+    String(r.ChildId) === viewer.UserId && String(r.RequestedById || '') === viewer.UserId;
+}
+
 function outRow_(r, viewer, childNames) {
   const isParent = viewer.Role === 'parent';
   const o = {
@@ -690,9 +696,11 @@ function outRow_(r, viewer, childNames) {
     name: labelOf_(r), status: r.Status, amount: Number(r.Amount) || 0, memo: String(r.Memo || ''),
     requestedBy: String(r.RequestedBy || ''), approvedBy: String(r.ApprovedBy || ''),
     canCancel: canCancel_(r, viewer),
-    canEdit: isParent && r.Status !== 'rejected' && r.Status !== 'cancelled',
-    canApprove: isParent && r.Status === 'pending',
-    canRevert: isParent && r.Status === 'approved' && r.Type !== 'bonus' && r.Type !== 'usage' && r.Type !== 'adjustment',
+    // 親は全項目、子供は自分の申請中のお手伝いの日付だけ
+    editMode: isParent && r.Status !== 'cancelled' ? 'full' : (canChildEditDate_(r, viewer) ? 'date' : ''),
+    // 親は「承認済み⇔却下」を何度でも入れ替えられる（間違えて却下した時の再承認）
+    canApprove: isParent && (r.Status === 'pending' || r.Status === 'rejected'),
+    canReject: isParent && (r.Status === 'pending' || r.Status === 'approved'),
     canHide: isParent && (r.Status === 'rejected' || r.Status === 'cancelled')
   };
   if (childNames) o.childName = childNames[String(r.ChildId)] || String(r.ChildId);
@@ -879,29 +887,35 @@ function apiPending_(ctx) {
   const names = {};
   listUsers_().forEach(function (u) { names[u.UserId] = u.Name; });
   const rows = ledgerRows_().filter(function (r) { return !isTrue_(r.Hidden); });
+  const byDateDesc = function (a, b) { return new Date(b.Timestamp) - new Date(a.Timestamp); };
   return {
     pending: rows.filter(function (r) { return r.Status === 'pending'; })
       .sort(function (a, b) { return new Date(a.Timestamp) - new Date(b.Timestamp); })
       .map(function (r) { return outRow_(r, me, names); }),
-    recent: rows.filter(function (r) { return r.Status === 'approved' && (r.Type === 'chore' || r.Type === 'bonus'); })
-      .sort(function (a, b) { return new Date(b.ApprovedAt || b.Timestamp) - new Date(a.ApprovedAt || a.Timestamp); })
-      .slice(0, 15)
+    // 申請中以外のすべての記録を「記録の日付」の新しい順に（ボーナスは翌月1日の位置に並ぶ）
+    history: rows.filter(function (r) { return r.Status !== 'pending'; })
+      .sort(byDateDesc)
+      .slice(0, 200)
       .map(function (r) { return outRow_(r, me, names); })
   };
 }
 
+/** 申請中・却下済みを承認にする（間違えて却下したものの再承認も可） */
 function apiApprove_(ctx) {
   const me = requireUser_(ctx.token, 'parent');
   const r = findLedger_(ctx.args.id);
-  if (r.Status !== 'pending') throw new Error('この申請はすでに処理済みです。');
-  updateRow_(SHEET_LEDGER, r._row, { Status: 'approved', ApprovedBy: me.Name, ApprovedAt: new Date() });
-  return { message: '承認しました。' };
+  if (r.Status !== 'pending' && r.Status !== 'rejected') throw new Error('この記録は承認できません。');
+  const patch = { Status: 'approved', ApprovedBy: me.Name, ApprovedAt: new Date() };
+  if (r.Status === 'rejected') patch.Memo = appendMemo_(r.Memo, '［' + me.Name + 'が再承認］');
+  updateRow_(SHEET_LEDGER, r._row, patch);
+  return { message: r.Status === 'rejected' ? '再承認しました。' : '承認しました。' };
 }
 
+/** 申請中・承認済みを却下にする（承認済み⇔却下は何度でも入れ替えられる） */
 function apiReject_(ctx) {
   const me = requireUser_(ctx.token, 'parent');
   const r = findLedger_(ctx.args.id);
-  if (r.Status !== 'pending') throw new Error('この申請はすでに処理済みです。');
+  if (r.Status !== 'pending' && r.Status !== 'approved') throw new Error('この記録は却下できません。');
   updateRow_(SHEET_LEDGER, r._row, {
     Status: 'rejected', ApprovedBy: me.Name, ApprovedAt: new Date(),
     Memo: appendMemo_(r.Memo, ctx.args.reason ? '［却下理由: ' + ctx.args.reason + '］' : '［' + me.Name + 'が却下］')
@@ -909,17 +923,22 @@ function apiReject_(ctx) {
   return { message: '却下しました。' };
 }
 
-/** 項目名・金額・日付（月日のみ。年と時刻は元のまま）を書き換える。承認前・承認後どちらでも可 */
+/**
+ * 項目名・金額・日付（月日のみ。年と時刻は元のまま）を書き換える。
+ * 親：取消以外のすべての記録。子供：自分が押した申請中のお手伝いの日付だけ。
+ */
 function apiEditEntry_(ctx) {
-  const me = requireUser_(ctx.token, 'parent');
+  const me = requireUser_(ctx.token);
   const r = findLedger_(ctx.args.id);
-  if (r.Status === 'rejected' || r.Status === 'cancelled') throw new Error('却下・取消済みの記録は編集できません。');
+  const isParent = me.Role === 'parent';
+  if (isParent && r.Status === 'cancelled') throw new Error('取消済みの記録は編集できません。');
+  if (!isParent && !canChildEditDate_(r, me)) throw new Error('この記録は編集できません。');
   const a = ctx.args;
   const patch = {};
-  if (a.name !== undefined && String(a.name).trim() && String(a.name).trim() !== labelOf_(r)) {
+  if (isParent && a.name !== undefined && String(a.name).trim() && String(a.name).trim() !== labelOf_(r)) {
     patch.ChoreName = String(a.name).trim();
   }
-  if (a.amount !== undefined && a.amount !== '') {
+  if (isParent && a.amount !== undefined && a.amount !== '') {
     let n = Math.round(Number(a.amount));
     if (!isFinite(n)) throw new Error('金額は数字で入力してください。');
     if (r.Type === 'usage') n = -Math.abs(n);

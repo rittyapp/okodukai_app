@@ -699,9 +699,9 @@ function labelOf_(r) {
   return { usage: 'つかった', adjustment: '残高調整', unlock_request: '上限追加のおねがい', bonus: 'ボーナス' }[r.Type] || String(r.Type);
 }
 
-/** 「取り消す」は子供だけ（親は却下を使う） */
+/** 「取り消す」は子供だけ（親は却下を使う）。親が承認済みのものは取り消せない */
 function canCancel_(r, viewer) {
-  if (r.Status !== 'pending' && r.Status !== 'approved') return false;
+  if (r.Status !== 'pending') return false;
   if (viewer.Role !== 'child' || String(r.ChildId) !== viewer.UserId) return false;
   if (r.Type === 'bonus' || r.Type === 'adjustment') return false;
   // 押した本人だけ取り消せる（旧データは RequestedById が無いので名前で判定）

@@ -84,8 +84,10 @@
   };
 
   function seed(S) {
+    // マスター（持ち主）はUsersシートに入れず、設定に持つ
+    props.OWNER_USER_ID = 'uPapa';
+    props.OWNER_NAME = 'パパ';
     S.repairSheets_();
-    sheets.Users.data.push(['uPapa', 'papa@example.com', 'パパ', 'parent', true, '']);
     sheets.Users.data.push(['uAiri', '', 'あいり', 'child', true, '1234']);
     sheets.Users.data.push(['uSho', '', 'しょう', 'child', true, '5678']);
     const today = jst(new Date());
@@ -93,6 +95,11 @@
     const lastMonth = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - 1, 1));
     const lm = lastMonth.getUTCFullYear() + '-' + pad(lastMonth.getUTCMonth() + 1);
     props.BONUS_START_MONTH = lm;
+    // 定期おこづかいのお試し：先月から毎月1日に500円
+    props.ALLOWANCE_ENABLED = 'true';
+    props.ALLOWANCE_AMOUNT = '500';
+    props.ALLOWANCE_DAY = '1';
+    props.ALLOWANCE_START = lm;
     const add = (day, hh, type, name, st, amt, by, byId) => sheets.Ledger.data.push([
       G.Utilities.getUuid(), new Date(day + 'T' + hh + ':00+09:00'), 'uAiri', type, 'c01', name, st, amt, '',
       by || 'あいり', st === 'approved' ? 'パパ' : '', '', '', byId || 'uAiri']);

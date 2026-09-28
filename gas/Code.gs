@@ -14,17 +14,21 @@
  *   APP_ICON            … アイコン {"emoji":"🐷","color":"#ffd35c"}。親の「設定」タブから変更する。
  *   BONUS_START_MONTH   … 月初ボーナスを計算し始める月（yyyy-MM）。初期設定時に自動で入る。
  *   PIN_GLOBAL_LOCK_UNTIL … 全体PINロックの解除時刻（ミリ秒）。自動で入る。消すと解除（設定タブからも解除可）。
+ *   OWNER_USER_ID / OWNER_NAME … マスター（スプレッドシートの持ち主）のIDと表示名。マスターはUsersシートに入れない。
+ *   HISTORY_LIMIT       … りれきに表示する件数（それより古いものは表示しない）。設定タブから変更。既定 30
+ *   BONUS_SAME_DAY_ENABLED / BONUS_STREAK_ENABLED … 「1日3回目」「3日連続」ボーナスの有効/無効（'false' で無効）
+ *   ALLOWANCE_ENABLED / ALLOWANCE_AMOUNT / ALLOWANCE_DAY / ALLOWANCE_START … 定期おこづかい（金額・毎月の支給日・開始年月 yyyy-MM）
  *   sess_<token>        … ログインセッション。自動で作成・削除される（手で触らない）。
  *
  * ── シート ──
- *   Users          … UserId / Email / Name / Role(parent|child) / Active / Pin(4桁・書式なしテキスト)
+ *   Users          … UserId / Email / Name / Role(parent|child) / Active / Pin(4桁・書式なしテキスト)（マスター以外の親と子供）
  *   ChoreMaster    … ChoreId / Name / BaseAmount / Active
  *   Ledger         … 全ての記録（お金の出入り・申請・ボーナス）。残高は Status=approved の Amount 合計
- *   PinDeviceState … PIN入力の失敗回数・ロック状態（端末＝ブラウザ単位。最大 DEVICE_MAX_ROWS 行）
+ *   PinDeviceState … PIN入力の失敗回数・ロック状態（端末＝ブラウザ単位）。TotalFails＝これまでの失敗の合計、Hidden＝親が一覧から隠した
  */
 
 // ===================== 設定値 =====================
-const SERVER_VERSION = '3.0.7';
+const SERVER_VERSION = '3.1.0';
 
 // 公開してよい情報のみ。クライアントIDはブラウザに渡る前提の値で、秘密ではない。
 const DEFAULT_OAUTH_CLIENT_ID = '337708567191-tpqbqqinfgm5bpje56ccdj2gmkphdngi.apps.googleusercontent.com';
@@ -42,7 +46,7 @@ const HEADERS = {
   // RequestedById … 押した（記録した）人のUserId。「押した本人なら取り消せる」の判定に使う。
   Ledger: ['Id', 'Timestamp', 'ChildId', 'Type', 'ChoreId', 'ChoreName', 'Status', 'Amount', 'Memo',
     'RequestedBy', 'ApprovedBy', 'ApprovedAt', 'Hidden', 'RequestedById'],
-  PinDeviceState: ['DeviceId', 'FailCount', 'LockUntil', 'HardLocked', 'UpdatedAt']
+  PinDeviceState: ['DeviceId', 'FailCount', 'LockUntil', 'HardLocked', 'UpdatedAt', 'TotalFails', 'Hidden']
 };
 
 const DEFAULT_CHORES = [
@@ -59,6 +63,9 @@ const SAME_DAY_BONUS_AMOUNT = 10;  // …+10円
 const STREAK_DAYS_FOR_BONUS = 3;   // 3日以上連続した日のお手伝い1回ごとに…
 const STREAK_BONUS_AMOUNT = 10;    // …+10円
 const BONUS_CHORE_PREFIX = 'bonus:'; // ボーナス行の ChoreId（bonus:yyyy-MM）。この行があれば「処理済み」
+const ALLOWANCE_CHORE_PREFIX = 'allowance:'; // 定期おこづかい行の ChoreId（allowance:yyyy-MM）。この行があれば「支給済み」
+const DEFAULT_HISTORY_LIMIT = 30;    // りれきの表示件数（設定タブで変更）
+const PARENT_RECENT_LIMIT = 3;       // 親の承認待ちタブの下に出す最新りれきの件数
 
 // セッション・PINロック
 const SESSION_PREFIX = 'sess_';
@@ -72,8 +79,7 @@ const WRONG_PIN_MESSAGE = 'ちがいます。もういちどためしてね。';
 const GLOBAL_FAIL_LIMIT = 20;               // 失敗がこの回数に達したら…
 const GLOBAL_FAIL_WINDOW_S = 600;           // （前の失敗から10分以内に続いた失敗を数える）
 const GLOBAL_LOCK_MS = 30 * 60 * 1000;      // …30分間、全端末のPINログインを止める（親は設定タブで解除可）
-const DEVICE_MAX_ROWS = 30;         // これを超えた古い端末行は黙って削除
-const DEVICE_RECENT_DAYS = 30;      // 設定タブに出す期間。0件なら最新3端末を出す
+const DEVICE_MAX_ROWS = 30;         // これを超えたら、失敗のない端末→親が隠した端末の古い順に黙って削除
 
 // 却下・取消から何日で履歴から自動的に隠すか（日次トリガー）
 const AUTO_HIDE_AFTER_DAYS = 30;
@@ -85,20 +91,23 @@ const API = {
   config: apiConfig_, authNonce: apiAuthNonce_, googleLogin: apiGoogleLogin_, pinLogin: apiPinLogin_,
   resume: apiResume_, logout: apiLogout_,
   // 子供・親
-  dashboard: apiDashboard_, pressChore: apiPressChore_, requestUnlock: apiRequestUnlock_,
+  dashboard: apiDashboard_, dashboardExtras: apiDashboardExtras_, dayEntries: apiDayEntries_, pressChore: apiPressChore_, requestUnlock: apiRequestUnlock_,
   addUsage: apiAddUsage_, cancelEntry: apiCancelEntry_, confirmBonus: apiConfirmBonus_,
+  receiveAllowance: apiReceiveAllowance_, changeMyPin: apiChangeMyPin_,
   // 親のみ
   pending: apiPending_, approve: apiApprove_, reject: apiReject_, editEntry: apiEditEntry_,
   revertEntry: apiRevertEntry_, hideEntry: apiHideEntry_, addAdjustment: apiAddAdjustment_,
   saveChore: apiSaveChore_, deleteChore: apiDeleteChore_,
   users: apiUsers_, upsertUser: apiUpsertUser_, deactivateUser: apiDeactivateUser_,
-  settings: apiSettings_, setAppName: apiSetAppName_, unlockDevice: apiUnlockDevice_, repair: apiRepair_
+  settings: apiSettings_, setAppName: apiSetAppName_, saveSettings: apiSaveSettings_,
+  unlockDevice: apiUnlockDevice_, hideDevice: apiHideDevice_, repair: apiRepair_
 };
 // 書き込み系はスクリプトロックで直列化し、requestId による二重送信防止をかける
 const WRITE_ACTIONS = {
   googleLogin: 1, pinLogin: 1, pressChore: 1, requestUnlock: 1, addUsage: 1, cancelEntry: 1, confirmBonus: 1,
   approve: 1, reject: 1, editEntry: 1, revertEntry: 1, hideEntry: 1, addAdjustment: 1, saveChore: 1,
-  deleteChore: 1, upsertUser: 1, deactivateUser: 1, setAppName: 1, unlockDevice: 1, repair: 1
+  deleteChore: 1, upsertUser: 1, deactivateUser: 1, setAppName: 1, unlockDevice: 1, repair: 1,
+  receiveAllowance: 1, changeMyPin: 1, saveSettings: 1, hideDevice: 1
 };
 
 function doPost(e) {
@@ -225,6 +234,21 @@ function repairSheets_() {
     invalidate_(name);
   });
 
+  // マスター（持ち主）はUsersシートに入れない。旧版で登録されていた行があれば、IDと表示名を引き継いで外す
+  const owner = ownerEmail_();
+  if (owner) {
+    const ownerRows = readTable_(SHEET_USERS).rows.filter(function (u) { return normalizeEmail_(u.Email) === owner; });
+    ownerRows.sort(function (a, b) { return b._row - a._row; }).forEach(function (u) {
+      if (!props_().getProperty('OWNER_USER_ID') && u.UserId) {
+        props_().setProperty('OWNER_USER_ID', String(u.UserId));
+        props_().setProperty('OWNER_NAME', String(u.Name || ''));
+      }
+      ss.getSheetByName(SHEET_USERS).deleteRow(u._row);
+      report.push('マスター（持ち主）の行をUsersシートから外し、設定に移しました（「' + u.Name + '」）');
+    });
+    invalidate_(SHEET_USERS);
+  }
+
   // PINの先頭0が消えないよう、Pin列を書式なしテキストにする
   const users = ss.getSheetByName(SHEET_USERS);
   const pinCol = users.getRange(1, 1, 1, users.getLastColumn()).getValues()[0].indexOf('Pin') + 1;
@@ -278,7 +302,10 @@ function repairSheets_() {
   return report;
 }
 
-/** シートが揃っているか・親がいるか（config で画面に返す） */
+/**
+ * シートが揃っているか・初期設定済みか（config で画面に返す）。
+ * 初期設定済み＝マスター（持ち主）が一度ログインしてシートを整えた（OWNER_USER_ID がある）
+ */
 function setupStatus_() {
   const ss = ss_();
   const sheetsOk = Object.keys(HEADERS).every(function (name) {
@@ -287,11 +314,7 @@ function setupStatus_() {
     const have = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0].map(String);
     return HEADERS[name].every(function (h) { return have.indexOf(h) !== -1; });
   });
-  let hasParent = false;
-  if (ss.getSheetByName(SHEET_USERS)) {
-    hasParent = listUsers_().some(function (u) { return u.Role === 'parent' && isActive_(u) && u.Email; });
-  }
-  return { sheetsOk: sheetsOk, hasParent: hasParent };
+  return { sheetsOk: sheetsOk, hasParent: !!props_().getProperty('OWNER_USER_ID') };
 }
 
 // ===================== 共通ユーティリティ =====================
@@ -443,18 +466,16 @@ function verifyIdToken_(idToken) {
 function apiGoogleLogin_(ctx) {
   const info = verifyIdToken_(ctx.args.idToken);
   const status = setupStatus_();
+  const isOwner = normalizeEmail_(info.email) === ownerEmail_();
   if (!status.sheetsOk || !status.hasParent) {
-    // 「初期設定」：シートを整え、親がいなければスプレッドシートの持ち主を最初の親にする
+    // 「初期設定」はマスター（スプレッドシートの持ち主）だけが行える
+    if (!isOwner) {
+      throw new Error('まだ初期設定がされていません。このスプレッドシートの持ち主のGoogleアカウント（' + maskEmail_(ownerEmail_()) + '）で「初期設定」を押してください。');
+    }
     repairSheets_();
-    if (!setupStatus_().hasParent) {
-      const owner = normalizeEmail_(Session.getEffectiveUser().getEmail());
-      if (!owner || owner !== normalizeEmail_(info.email)) {
-        throw new Error('最初の親は、このスプレッドシートの持ち主のGoogleアカウント（' + maskEmail_(owner) + '）でログインしてください。');
-      }
-      appendRow_(SHEET_USERS, {
-        UserId: generateUserId_(), Email: info.email, Name: info.name || info.email.split('@')[0],
-        Role: 'parent', Active: true, Pin: ''
-      });
+    if (!props_().getProperty('OWNER_USER_ID')) {
+      props_().setProperty('OWNER_USER_ID', 'owner');
+      props_().setProperty('OWNER_NAME', info.name || info.email.split('@')[0]);
     }
   }
   const user = findUserByEmail_(info.email);
@@ -488,7 +509,8 @@ function apiPinLogin_(ctx) {
   if (fails >= LOCK_STAGE3_COUNT) hard = true;
   else if (fails >= LOCK_STAGE2_COUNT) until = Date.now() + LOCK_STAGE2_MS;
   else if (fails >= LOCK_STAGE1_COUNT) until = Date.now() + LOCK_STAGE1_MS;
-  saveDeviceState_(deviceId, { FailCount: fails, LockUntil: until, HardLocked: hard });
+  // 1度でも失敗した端末は親の一覧に出す（親が隠していても、また失敗したら出す）
+  saveDeviceState_(deviceId, { FailCount: fails, LockUntil: until, HardLocked: hard, TotalFails: Number(state.TotalFails || 0) + 1, Hidden: false });
   countGlobalPinFail_();
   return { ok: false, message: WRONG_PIN_MESSAGE };
 }
@@ -522,14 +544,39 @@ function apiLogout_(ctx) {
 
 // ===================== ユーザー =====================
 
+/** マスター＝このスプレッドシートの持ち主。取れない環境では実行ユーザー（デプロイした人）を使う */
+let OWNER_EMAIL_CACHE_ = null; // 1回のリクエスト内だけ使う
+function ownerEmail_() {
+  if (OWNER_EMAIL_CACHE_ !== null) return OWNER_EMAIL_CACHE_;
+  let email = '';
+  try { const o = ss_().getOwner(); email = o ? o.getEmail() : ''; } catch (e) { /* 共有ドライブなど */ }
+  if (!email) { try { email = Session.getEffectiveUser().getEmail(); } catch (e) { /* 取得できない */ } }
+  OWNER_EMAIL_CACHE_ = normalizeEmail_(email);
+  return OWNER_EMAIL_CACHE_;
+}
+function ownerId_() { return props_().getProperty('OWNER_USER_ID') || 'owner'; }
+/** マスターの利用者情報（Usersシートには無い。アプリからは変更・削除・無効化できない） */
+function ownerUser_() {
+  const email = ownerEmail_();
+  return {
+    UserId: ownerId_(), Email: email, Name: props_().getProperty('OWNER_NAME') || (email ? email.split('@')[0] : 'マスター'),
+    Role: 'parent', Active: true, Pin: '', isOwner: true
+  };
+}
+/** Usersシートの利用者（マスター以外の親と子供） */
 function listUsers_() {
-  return readTable_(SHEET_USERS).rows.filter(function (u) { return u.UserId; }).map(function (u) {
+  const owner = ownerEmail_();
+  return readTable_(SHEET_USERS).rows.filter(function (u) {
+    return u.UserId && !(owner && normalizeEmail_(u.Email) === owner);
+  }).map(function (u) {
     u.UserId = String(u.UserId);
     return u;
   });
 }
+/** マスターを含む全員 */
+function allUsers_() { return [ownerUser_()].concat(listUsers_()); }
 function findUserById_(id) {
-  return listUsers_().filter(function (u) { return u.UserId === String(id); })[0] || null;
+  return allUsers_().filter(function (u) { return u.UserId === String(id); })[0] || null;
 }
 function normalizeEmail_(email) { return email ? String(email).trim().toLowerCase() : ''; }
 function maskEmail_(email) {
@@ -540,7 +587,7 @@ function maskEmail_(email) {
 function findUserByEmail_(email) {
   const n = normalizeEmail_(email);
   if (!n) return null;
-  return listUsers_().filter(function (u) { return normalizeEmail_(u.Email) === n; })[0] || null;
+  return allUsers_().filter(function (u) { return normalizeEmail_(u.Email) === n; })[0] || null;
 }
 /** 全角数字→半角。シートが数値書式で先頭0が落ちていても4桁に戻して比較する */
 function normalizePin_(v) {
@@ -563,19 +610,46 @@ function apiUsers_(ctx) {
   const balances = balancesByChild_();
   const users = listUsers_();
   return {
-    me: { id: me.UserId, name: me.Name, email: me.Email },
+    me: { id: me.UserId, name: me.Name, email: me.Email, isOwner: !!me.isOwner },
+    // 親には子供のPINも見せる（子供が自分で変えた番号を親が確認できるように）
     children: users.filter(function (u) { return u.Role === 'child'; }).map(function (u) {
-      return { id: u.UserId, name: u.Name, email: u.Email || '', hasPin: !!String(u.Pin || ''), active: isActive_(u), balance: balances[u.UserId] || 0 };
+      const pin = u.Pin !== '' && u.Pin != null ? normalizePin_(u.Pin) : '';
+      return { id: u.UserId, name: u.Name, email: u.Email || '', hasPin: !!pin, pin: pin, active: isActive_(u), balance: balances[u.UserId] || 0 };
     }),
-    parents: users.filter(function (u) { return u.Role === 'parent'; }).map(function (u) {
-      return { id: u.UserId, name: u.Name, email: u.Email || '', active: isActive_(u), isMe: u.UserId === me.UserId };
+    // マスターが先頭。マスターは変更・削除・無効化できない（表示名だけ本人が変えられる）
+    parents: [ownerUser_()].concat(users.filter(function (u) { return u.Role === 'parent'; })).map(function (u) {
+      return { id: u.UserId, name: u.Name, email: u.Email || '', active: isActive_(u), isMe: u.UserId === me.UserId, isOwner: !!u.isOwner };
     })
   };
 }
 
+/** 子供本人：自分のPIN（じぶんのばんごう）を変える。画面側で2回入力して一致したときだけ呼ぶ */
+function apiChangeMyPin_(ctx) {
+  const me = requireUser_(ctx.token, 'child');
+  const pin = normalizePin_(ctx.args.pin);
+  if (!/^\d{4}$/.test(pin)) throw new Error('4けたの数字にしてね。');
+  const taken = listUsers_().some(function (u) {
+    return u.UserId !== me.UserId && u.Role === 'child' && u.Pin !== '' && normalizePin_(u.Pin) === pin;
+  });
+  if (taken) throw new Error('その番号はつかえないよ。べつの番号にしてね。');
+  updateRow_(SHEET_USERS, me._row, { Pin: pin });
+  return { pin: pin, message: 'あなたが変更した番号は ' + pin + ' です' };
+}
+
 function apiUpsertUser_(ctx) {
-  requireUser_(ctx.token, 'parent');
+  const me = requireUser_(ctx.token, 'parent');
   const a = ctx.args;
+  // マスター：変更できるのは本人の表示名だけ
+  if (a.userId && String(a.userId) === ownerId_()) {
+    if (!me.isOwner) throw new Error('マスター（持ち主）は変更できません。');
+    const ownerName = String(a.name || '').trim();
+    if (!ownerName) throw new Error('表示名を入力してください。');
+    props_().setProperty('OWNER_NAME', ownerName);
+    return { message: '表示名を変更しました。' };
+  }
+  if (a.email && normalizeEmail_(a.email) === ownerEmail_()) {
+    throw new Error('そのメールアドレスはマスター（持ち主）です。登録する必要はありません。');
+  }
   const email = String(a.email || '').trim();
   const name = String(a.name || '').trim();
   const role = a.role;
@@ -600,7 +674,6 @@ function apiUpsertUser_(ctx) {
 
   const active = a.active === undefined ? true : !!a.active;
   if (existing) {
-    if (existing.Role === 'parent' && (role === 'child' || !active)) guardLastParent_(existing.UserId);
     updateRow_(SHEET_USERS, existing._row, { Email: email, Name: name, Role: role, Active: active, Pin: pin });
   } else {
     appendRow_(SHEET_USERS, { UserId: generateUserId_(), Email: email, Name: name, Role: role, Active: true, Pin: pin });
@@ -612,16 +685,9 @@ function apiDeactivateUser_(ctx) {
   requireUser_(ctx.token, 'parent');
   const target = findUserById_(ctx.args.userId);
   if (!target) throw new Error('ユーザーが見つかりません。');
-  if (target.Role === 'parent') guardLastParent_(target.UserId);
+  if (target.isOwner) throw new Error('マスター（持ち主）は無効にできません。');
   updateRow_(SHEET_USERS, target._row, { Active: false });
   return { message: '無効にしました。' };
-}
-
-function guardLastParent_(excludeUserId) {
-  const remaining = listUsers_().filter(function (u) {
-    return u.Role === 'parent' && isActive_(u) && u.UserId !== excludeUserId;
-  });
-  if (!remaining.length) throw new Error('親が0人になってしまうため、この操作はできません。親は最低1人必要です。');
 }
 
 function targetChild_(me, childId) {
@@ -691,6 +757,13 @@ function appendMemo_(memo, add) {
   memo = String(memo || '');
   return memo.endsWith(add) ? memo : memo + add; // 同じ追記が続かないように
 }
+/**
+ * 承認・却下を切り替えたとき、前の「○○が却下」「○○が再承認」などの書き込みを消す。
+ * 誰が最後に決めたかは ApprovedBy 列に残り、画面にも表示される（最後の1回分だけ残す）
+ */
+function stripDecisionMemo_(memo) {
+  return String(memo || '').replace(/［[^［］]*?(が却下|が再承認|が承認|が未承認に戻した)］/g, '').replace(/［却下理由: [^［］]*］/g, '');
+}
 /** 残高に入る記録：承認済み＋子供が申請中の「つかった」（使ったお金はすぐ残高から引く） */
 function inBalance_(r) { return r.Status === 'approved' || (r.Status === 'pending' && r.Type === 'usage'); }
 /** ボーナスや回数制限の対象になる「お手伝い」（却下・取消は数えない） */
@@ -698,7 +771,7 @@ function isCountedChore_(r) { return r.Type === 'chore' && (r.Status === 'approv
 
 function labelOf_(r) {
   if (r.ChoreName) return String(r.ChoreName);
-  return { usage: 'つかった', adjustment: '残高調整', unlock_request: '上限追加のおねがい', bonus: 'ボーナス' }[r.Type] || String(r.Type);
+  return { usage: 'つかった', adjustment: '残高調整', unlock_request: '上限追加のおねがい', bonus: 'ボーナス', allowance: 'おこづかい' }[r.Type] || String(r.Type);
 }
 
 /**
@@ -707,7 +780,7 @@ function labelOf_(r) {
  */
 function canCancel_(r, viewer) {
   if (viewer.Role !== 'child' || String(r.ChildId) !== viewer.UserId) return false;
-  if (r.Type === 'bonus' || r.Type === 'adjustment') return false;
+  if (r.Type === 'bonus' || r.Type === 'adjustment' || r.Type === 'allowance') return false;
   const selfApprovedUsage = r.Type === 'usage' && r.Status === 'approved' && String(r.ApprovedBy) === String(viewer.Name);
   if (r.Status !== 'pending' && !selfApprovedUsage) return false;
   // 押した本人だけ取り消せる（旧データは RequestedById が無いので名前で判定）
@@ -722,6 +795,8 @@ function canChildEditDate_(r, viewer) {
 
 function outRow_(r, viewer, childNames) {
   const isParent = viewer.Role === 'parent';
+  // 非表示にした記録は、承認・却下を切り替えられない（通信の遅れを使って「隠したまま残高に入る」操作を防ぐ）
+  const hidden = isTrue_(r.Hidden);
   const o = {
     id: String(r.Id), ts: toIso_(r.Timestamp), day: dayOf_(r.Timestamp), type: r.Type,
     name: labelOf_(r), status: r.Status, amount: Number(r.Amount) || 0, memo: String(r.Memo || ''),
@@ -731,9 +806,9 @@ function outRow_(r, viewer, childNames) {
     // 子供：自分が押した申請中のお手伝いの日付だけ
     editMode: isParent && (r.Status === 'pending' || r.Status === 'approved') ? 'full' : (canChildEditDate_(r, viewer) ? 'date' : ''),
     // 親は「承認済み⇔却下」を何度でも入れ替えられる（間違えて却下した時の再承認）
-    canApprove: isParent && (r.Status === 'pending' || r.Status === 'rejected'),
-    canReject: isParent && (r.Status === 'pending' || r.Status === 'approved'),
-    canHide: isParent && (r.Status === 'rejected' || r.Status === 'cancelled')
+    canApprove: isParent && !hidden && (r.Status === 'pending' || r.Status === 'rejected'),
+    canReject: isParent && !hidden && (r.Status === 'pending' || r.Status === 'approved'),
+    canHide: isParent && !hidden && (r.Status === 'rejected' || r.Status === 'cancelled')
   };
   if (childNames) o.childName = childNames[String(r.ChildId)] || String(r.ChildId);
   return o;
@@ -759,14 +834,21 @@ function countByDay_(rows, approvedOnly) {
   return m;
 }
 
-/** ym(yyyy-MM) のボーナスを計算。連続日数は前月から続いていても数える */
+/** 設定タブの「1日3回目ボーナス」「3日連続ボーナス」の有効/無効（既定は有効） */
+function sameDayBonusOn_() { return props_().getProperty('BONUS_SAME_DAY_ENABLED') !== 'false'; }
+function streakBonusOn_() { return props_().getProperty('BONUS_STREAK_ENABLED') !== 'false'; }
+
+/** ym(yyyy-MM) のボーナスを計算。連続日数は前月から続いていても数える。無効にしたボーナスは0円 */
 function calcMonthBonus_(byDay, ym) {
   let same = 0;
   let streak = 0;
+  const sameOn = sameDayBonusOn_();
+  const streakOn = streakBonusOn_();
   Object.keys(byDay).forEach(function (d) {
     if (d.substring(0, 7) !== ym) return;
     const n = byDay[d];
-    if (n >= SAME_DAY_BONUS_FROM) same += (n - SAME_DAY_BONUS_FROM + 1) * SAME_DAY_BONUS_AMOUNT;
+    if (sameOn && n >= SAME_DAY_BONUS_FROM) same += (n - SAME_DAY_BONUS_FROM + 1) * SAME_DAY_BONUS_AMOUNT;
+    if (!streakOn) return;
     let len = 1;
     let c = dayAdd_(d, -1);
     while (byDay[c]) { len++; c = dayAdd_(c, -1); }
@@ -775,8 +857,62 @@ function calcMonthBonus_(byDay, ym) {
   return { same: same, streak: streak, total: same + streak };
 }
 
+// ===================== 定期おこづかい =====================
+
+function allowanceSettings_() {
+  const p = props_();
+  return {
+    enabled: p.getProperty('ALLOWANCE_ENABLED') === 'true',
+    amount: Number(p.getProperty('ALLOWANCE_AMOUNT') || 0),
+    day: Number(p.getProperty('ALLOWANCE_DAY') || 1),
+    start: p.getProperty('ALLOWANCE_START') || ''
+  };
+}
+function daysInMonth_(ym) { const p = ym.split('-').map(Number); return new Date(Date.UTC(p[0], p[1], 0)).getUTCDate(); }
+
+/**
+ * まだ受け取っていない定期おこづかい（古い月から）。支給日（その月に無い日は月末）を過ぎた月だけ。
+ * 1度受け取った月は、あとで支給日を変えても2回目は出ない（allowance:yyyy-MM の行が印）
+ */
+function allowanceDue_(rows) {
+  const s = allowanceSettings_();
+  if (!s.enabled || !(s.amount > 0) || !/^\d{4}-\d{2}$/.test(s.start)) return [];
+  const done = {};
+  rows.forEach(function (r) {
+    const id = String(r.ChoreId || '');
+    if (r.Type === 'allowance' && id.indexOf(ALLOWANCE_CHORE_PREFIX) === 0) done[id.substring(ALLOWANCE_CHORE_PREFIX.length)] = true;
+  });
+  const today = todayStr_();
+  const out = [];
+  for (let ym = s.start, i = 0; ym <= today.substring(0, 7) && i < 60; ym = monthAdd_(ym, 1), i++) {
+    if (done[ym]) continue;
+    const payDay = ym + '-' + pad2_(Math.min(Math.max(s.day, 1), daysInMonth_(ym)));
+    if (payDay > today) continue;
+    out.push({ ym: ym, label: Number(ym.substring(5)) + '月のおこづかい', day: payDay, amount: s.amount });
+  }
+  return out;
+}
+
+/** 定期おこづかいを1か月分受け取る（押すたびに古い月から1回分。システムが承認） */
+function apiReceiveAllowance_(ctx) {
+  const me = requireUser_(ctx.token);
+  const child = targetChild_(me, ctx.args.childId);
+  const rows = ledgerRows_().filter(function (r) { return String(r.ChildId) === child.UserId; });
+  const due = allowanceDue_(rows);
+  if (!due.length) return { message: 'うけとれるおこづかいはありません。', remaining: 0 };
+  const a = due[0];
+  addLedger_({
+    Timestamp: parseLocal_(a.day + ' 00:00:00'), // 登録された支給日で記録
+    ChildId: child.UserId, Type: 'allowance', ChoreId: ALLOWANCE_CHORE_PREFIX + a.ym, ChoreName: a.label,
+    Status: 'approved', Amount: a.amount, Memo: a.label + ' ' + a.amount + '円',
+    RequestedBy: 'システム', RequestedById: 'system', ApprovedBy: 'システム', ApprovedAt: new Date()
+  });
+  return { message: a.label + '（' + a.amount + '円）をうけとったよ！', remaining: due.length - 1 };
+}
+
 /** まだボーナス処理（0円も含む）がされていない、お手伝いをした過去の月 */
 function unconfirmedBonusMonths_(rows) {
+  if (!sameDayBonusOn_() && !streakBonusOn_()) return []; // ボーナスを両方とも無効にしている
   const start = props_().getProperty('BONUS_START_MONTH') || '0000-00';
   const current = thisMonth_();
   const done = {};
@@ -831,7 +967,45 @@ function apiConfirmBonus_(ctx) {
 
 // ===================== 子供の画面（子供本人・親の両方から） =====================
 
+function historyLimit_() {
+  const n = Number(props_().getProperty('HISTORY_LIMIT') || DEFAULT_HISTORY_LIMIT);
+  return n >= 5 && n <= 500 ? n : DEFAULT_HISTORY_LIMIT;
+}
+const byNewest_ = function (a, b) { return new Date(b.Timestamp) - new Date(a.Timestamp); };
+
+/**
+ * 子供の画面（最初に出す分）：残高・お手伝いボタン・りれき（最新 HISTORY_LIMIT 件）・カレンダー用の軽い一覧。
+ * ボーナスやおこづかいの判定は、画面を出したあと dashboardExtras で取りに行く（表示を待たせないため）
+ */
 function apiDashboard_(ctx) {
+  const me = requireUser_(ctx.token);
+  const child = targetChild_(me, ctx.args.childId);
+  const rows = ledgerRows_().filter(function (r) { return String(r.ChildId) === child.UserId; });
+  const today = todayStr_();
+  const todayCount = rows.filter(function (r) { return isCountedChore_(r) && dayOf_(r.Timestamp) === today; }).length;
+  const isToday = function (r) { return r.Type === 'unlock_request' && dayOf_(r.Timestamp) === today; };
+  const visible = rows.filter(function (r) { return !isTrue_(r.Hidden); }).sort(byNewest_);
+
+  return {
+    child: { id: child.UserId, name: child.Name },
+    viewerRole: me.Role,
+    balance: rows.reduce(function (s, r) { return inBalance_(r) ? s + (Number(r.Amount) || 0) : s; }, 0),
+    chores: listChores_(),
+    // 表示件数より古いりれきは表示しない（非表示フラグは付けないので、カレンダーの日付からは見られる）
+    history: visible.slice(0, historyLimit_()).map(function (r) { return outRow_(r, me); }),
+    historyLimit: historyLimit_(),
+    // カレンダーの色付け用（日付・種類・状態だけ）
+    calendar: visible.map(function (r) { return [dayOf_(r.Timestamp), r.Type, r.Status]; }),
+    today: {
+      day: today, count: todayCount, limit: DAILY_LIMIT,
+      unlocked: rows.some(function (r) { return isToday(r) && r.Status === 'approved'; }),
+      unlockPending: rows.some(function (r) { return isToday(r) && r.Status === 'pending'; })
+    }
+  };
+}
+
+/** 子供の画面（あとから出す分）：ボーナス発生中・月初ボーナスの確認・定期おこづかい */
+function apiDashboardExtras_(ctx) {
   const me = requireUser_(ctx.token);
   const child = targetChild_(me, ctx.args.childId);
   const rows = ledgerRows_().filter(function (r) { return String(r.ChildId) === child.UserId; });
@@ -840,32 +1014,27 @@ function apiDashboard_(ctx) {
   let streakBefore = 0;
   for (let c = dayAdd_(today, -1); byDay[c]; c = dayAdd_(c, -1)) streakBefore++;
   const todayCount = byDay[today] || 0;
-  const isToday = function (r) { return r.Type === 'unlock_request' && dayOf_(r.Timestamp) === today; };
-
-  const history = rows
-    .filter(function (r) { return !isTrue_(r.Hidden); })
-    .sort(function (a, b) { return new Date(b.Timestamp) - new Date(a.Timestamp); })
-    .map(function (r) { return outRow_(r, me); });
-
   return {
-    child: { id: child.UserId, name: child.Name },
-    viewerRole: me.Role,
-    balance: rows.reduce(function (s, r) { return inBalance_(r) ? s + (Number(r.Amount) || 0) : s; }, 0),
-    chores: listChores_(),
-    history: history,
-    today: {
-      day: today, count: todayCount, limit: DAILY_LIMIT,
-      unlocked: rows.some(function (r) { return isToday(r) && r.Status === 'approved'; }),
-      unlockPending: rows.some(function (r) { return isToday(r) && r.Status === 'pending'; })
-    },
     bonus: {
       // 昨日まで2日続いていれば、今日のお手伝いは「3日連続」の対象
-      streakActive: streakBefore >= STREAK_DAYS_FOR_BONUS - 1,
+      streakActive: streakBonusOn_() && streakBefore >= STREAK_DAYS_FOR_BONUS - 1,
       streakDays: streakBefore + (todayCount ? 1 : 0),
-      sameDayActive: todayCount >= SAME_DAY_BONUS_FROM - 1,
+      sameDayActive: sameDayBonusOn_() && todayCount >= SAME_DAY_BONUS_FROM - 1,
       pendingMonths: unconfirmedBonusMonths_(rows)
-    }
+    },
+    allowance: allowanceDue_(rows)
   };
+}
+
+/** カレンダーで選んだ日の記録（りれきの表示件数より古い日を開いたとき用） */
+function apiDayEntries_(ctx) {
+  const me = requireUser_(ctx.token);
+  const child = targetChild_(me, ctx.args.childId);
+  const day = String(ctx.args.day || '');
+  return ledgerRows_()
+    .filter(function (r) { return String(r.ChildId) === child.UserId && !isTrue_(r.Hidden) && dayOf_(r.Timestamp) === day; })
+    .sort(byNewest_)
+    .map(function (r) { return outRow_(r, me); });
 }
 
 function apiPressChore_(ctx) {
@@ -938,17 +1107,17 @@ function apiCancelEntry_(ctx) {
 function apiPending_(ctx) {
   const me = requireUser_(ctx.token, 'parent');
   const names = {};
-  listUsers_().forEach(function (u) { names[u.UserId] = u.Name; });
+  allUsers_().forEach(function (u) { names[u.UserId] = u.Name; });
   const rows = ledgerRows_().filter(function (r) { return !isTrue_(r.Hidden); });
   const byDateDesc = function (a, b) { return new Date(b.Timestamp) - new Date(a.Timestamp); };
   return {
     pending: rows.filter(function (r) { return r.Status === 'pending'; })
       .sort(function (a, b) { return new Date(a.Timestamp) - new Date(b.Timestamp); })
       .map(function (r) { return outRow_(r, me, names); }),
-    // 申請中以外のすべての記録を「記録の日付」の新しい順に（ボーナスは翌月1日の位置に並ぶ）
+    // 申請中以外の記録を「記録の日付」の新しい順に、最新の数件だけ（それより前は子の画面で見る・直す）
     history: rows.filter(function (r) { return r.Status !== 'pending'; })
       .sort(byDateDesc)
-      .slice(0, 200)
+      .slice(0, PARENT_RECENT_LIMIT)
       .map(function (r) { return outRow_(r, me, names); })
   };
 }
@@ -957,10 +1126,10 @@ function apiPending_(ctx) {
 function apiApprove_(ctx) {
   const me = requireUser_(ctx.token, 'parent');
   const r = findLedger_(ctx.args.id);
+  if (isTrue_(r.Hidden)) throw new Error('非表示にした記録は、承認・却下を変更できません。');
   if (r.Status !== 'pending' && r.Status !== 'rejected') throw new Error('この記録は承認できません。');
-  const patch = { Status: 'approved', ApprovedBy: me.Name, ApprovedAt: new Date() };
-  if (r.Status === 'rejected') patch.Memo = appendMemo_(r.Memo, '［' + me.Name + 'が再承認］');
-  updateRow_(SHEET_LEDGER, r._row, patch);
+  // 最後に決めた人だけを残す（ApprovedBy）。前の却下・再承認の書き込みは消す
+  updateRow_(SHEET_LEDGER, r._row, { Status: 'approved', ApprovedBy: me.Name, ApprovedAt: new Date(), Memo: stripDecisionMemo_(r.Memo) });
   return { message: r.Status === 'rejected' ? '再承認しました。' : '承認しました。' };
 }
 
@@ -968,10 +1137,12 @@ function apiApprove_(ctx) {
 function apiReject_(ctx) {
   const me = requireUser_(ctx.token, 'parent');
   const r = findLedger_(ctx.args.id);
+  if (isTrue_(r.Hidden)) throw new Error('非表示にした記録は、承認・却下を変更できません。');
   if (r.Status !== 'pending' && r.Status !== 'approved') throw new Error('この記録は却下できません。');
+  const base = stripDecisionMemo_(r.Memo);
   updateRow_(SHEET_LEDGER, r._row, {
     Status: 'rejected', ApprovedBy: me.Name, ApprovedAt: new Date(),
-    Memo: appendMemo_(r.Memo, ctx.args.reason ? '［却下理由: ' + ctx.args.reason + '］' : '［' + me.Name + 'が却下］')
+    Memo: ctx.args.reason ? base + '［却下理由: ' + ctx.args.reason + '］' : base
   });
   return { message: '却下しました。' };
 }
@@ -1052,8 +1223,44 @@ function apiSettings_(ctx) {
   const g = globalPinLockUntil_();
   return {
     appName: appName_(), appIcon: appIcon_(), spreadsheetUrl: ss_().getUrl(), devices: listDevices_(),
-    globalLockUntil: g ? new Date(g).toISOString() : '', version: SERVER_VERSION
+    globalLockUntil: g ? new Date(g).toISOString() : '', version: SERVER_VERSION,
+    bonusSameDay: sameDayBonusOn_(), bonusStreak: streakBonusOn_(),
+    allowance: allowanceSettings_(), historyLimit: historyLimit_()
   };
+}
+
+/** 設定タブ：ボーナスの有効/無効・定期おこづかい・りれきの表示件数 */
+function apiSaveSettings_(ctx) {
+  requireUser_(ctx.token, 'parent');
+  const a = ctx.args;
+  const p = props_();
+  if (a.bonusSameDay !== undefined || a.bonusStreak !== undefined) {
+    const wasOff = !sameDayBonusOn_() && !streakBonusOn_();
+    p.setProperty('BONUS_SAME_DAY_ENABLED', a.bonusSameDay ? 'true' : 'false');
+    p.setProperty('BONUS_STREAK_ENABLED', a.bonusStreak ? 'true' : 'false');
+    // 両方無効 → 有効に戻したときは、止めていた間の月をさかのぼって出さない（今月から計算）
+    if (wasOff && (a.bonusSameDay || a.bonusStreak)) p.setProperty('BONUS_START_MONTH', thisMonth_());
+  }
+  if (a.allowance) {
+    const al = a.allowance;
+    const amount = Math.round(Number(al.amount));
+    const day = Math.round(Number(al.day));
+    if (al.enabled) {
+      if (!(amount > 0)) throw new Error('おこづかいの金額を入力してください。');
+      if (!(day >= 1 && day <= 31)) throw new Error('支給日は1〜31日で入力してください。');
+      if (!/^\d{4}-\d{2}$/.test(String(al.start || ''))) throw new Error('開始年月を選んでください。');
+    }
+    p.setProperty('ALLOWANCE_ENABLED', al.enabled ? 'true' : 'false');
+    if (amount > 0) p.setProperty('ALLOWANCE_AMOUNT', String(amount));
+    if (day >= 1 && day <= 31) p.setProperty('ALLOWANCE_DAY', String(day));
+    if (/^\d{4}-\d{2}$/.test(String(al.start || ''))) p.setProperty('ALLOWANCE_START', String(al.start));
+  }
+  if (a.historyLimit !== undefined) {
+    const n = Math.round(Number(a.historyLimit));
+    if (!(n >= 5 && n <= 500)) throw new Error('りれきの表示件数は5〜500件で入力してください。');
+    p.setProperty('HISTORY_LIMIT', String(n));
+  }
+  return { message: '設定を保存しました。' };
 }
 
 /** アプリ名とアイコン（絵文字＋背景色）を保存。画面側がショートカット用の情報に反映する */
@@ -1102,14 +1309,22 @@ function saveDeviceState_(deviceId, patch) {
   cleanupDevices_();
 }
 
-/** 端末行が DEVICE_MAX_ROWS を超えたら古い順に黙って削除 */
+/** 親の一覧に出す端末：1度でも失敗したことがあり、親が隠していない端末 */
+function isListedDevice_(d) { return Number(d.TotalFails || 0) > 0 && !isTrue_(d.Hidden); }
+
+/**
+ * 端末行が DEVICE_MAX_ROWS を超えたら黙って削除する。
+ * 消す順番：失敗したことのない端末 → 親が隠した端末（それぞれ古い順）。一覧に出ている端末は消さない
+ */
 function cleanupDevices_() {
   const sh = ss_().getSheetByName(SHEET_DEVICES);
   if (!sh) return;
   const rows = readTable_(SHEET_DEVICES).rows.filter(function (r) { return r.DeviceId; });
   if (rows.length <= DEVICE_MAX_ROWS) return;
-  rows.sort(function (a, b) { return new Date(b.UpdatedAt || 0) - new Date(a.UpdatedAt || 0); })
-    .slice(DEVICE_MAX_ROWS)
+  const oldestFirst = function (a, b) { return new Date(a.UpdatedAt || 0) - new Date(b.UpdatedAt || 0); };
+  const candidates = rows.filter(function (r) { return !Number(r.TotalFails || 0); }).sort(oldestFirst)
+    .concat(rows.filter(function (r) { return Number(r.TotalFails || 0) && isTrue_(r.Hidden); }).sort(oldestFirst));
+  candidates.slice(0, rows.length - DEVICE_MAX_ROWS)
     .map(function (r) { return r._row; })
     .sort(function (a, b) { return b - a; })
     .forEach(function (rowIndex) { sh.deleteRow(rowIndex); });
@@ -1118,21 +1333,27 @@ function cleanupDevices_() {
 
 function listDevices_() {
   const now = Date.now();
-  const all = readTable_(SHEET_DEVICES).rows.filter(function (r) { return r.DeviceId; })
-    .sort(function (a, b) { return new Date(b.UpdatedAt || 0) - new Date(a.UpdatedAt || 0); });
-  const cutoff = now - DEVICE_RECENT_DAYS * 24 * 60 * 60 * 1000;
-  let list = all.filter(function (r) { return new Date(r.UpdatedAt || 0).getTime() >= cutoff; });
-  if (!list.length) list = all.slice(0, 3);
-  return list.map(function (d) {
-    const hard = isTrue_(d.HardLocked);
-    const until = Number(d.LockUntil) || 0;
-    return {
-      deviceId: String(d.DeviceId), shortId: String(d.DeviceId).substring(0, 8),
-      failCount: Number(d.FailCount) || 0, hardLocked: hard,
-      lockedUntil: until > now ? new Date(until).toISOString() : '',
-      locked: hard || until > now, updatedAt: toIso_(d.UpdatedAt)
-    };
-  });
+  return readTable_(SHEET_DEVICES).rows.filter(function (r) { return r.DeviceId && isListedDevice_(r); })
+    .sort(function (a, b) { return new Date(b.UpdatedAt || 0) - new Date(a.UpdatedAt || 0); })
+    .map(function (d) {
+      const hard = isTrue_(d.HardLocked);
+      const until = Number(d.LockUntil) || 0;
+      return {
+        deviceId: String(d.DeviceId), shortId: String(d.DeviceId).substring(0, 8),
+        failCount: Number(d.FailCount) || 0, totalFails: Number(d.TotalFails) || 0, hardLocked: hard,
+        lockedUntil: until > now ? new Date(until).toISOString() : '',
+        locked: hard || until > now, updatedAt: toIso_(d.UpdatedAt)
+      };
+    });
+}
+
+/** 親：端末を一覧から隠す（その後また失敗したら自動で一覧に戻る） */
+function apiHideDevice_(ctx) {
+  requireUser_(ctx.token, 'parent');
+  const d = getDeviceState_(String(ctx.args.deviceId || ''));
+  if (!d._row) throw new Error('端末が見つかりません。');
+  updateRow_(SHEET_DEVICES, d._row, { Hidden: true });
+  return { message: '一覧から非表示にしました。' };
 }
 
 // ===================== 自動非表示（日次トリガー） =====================

@@ -112,6 +112,11 @@
       <div class="balance-amount" id="childBalance">-</div>
     </div>
 
+    <div class="bonus-card hidden" id="allowanceBox">
+      <div id="allowanceText"></div>
+      <button class="btn btn-main" id="btnAllowance">おこづかいをうけとる</button>
+    </div>
+
     <div class="bonus-card hidden" id="bonusConfirmBox">
       <div id="bonusConfirmText"></div>
       <button class="btn btn-main" id="btnConfirmBonus">🎁 ボーナスを確認</button>
@@ -147,7 +152,6 @@
 
     <div class="section-title">りれき</div>
     <div id="childHistory"></div>
-    <button class="btn btn-sub hidden" id="btnMoreHistory">もっと見る</button>
   </div>
 
   <div class="pane hidden" id="childPaneCal">
@@ -166,6 +170,21 @@
   </div>
 </section>
 
+<!-- ============ じぶんのばんごう（子供が自分のPINを変える） ============ -->
+<section id="screenPin" class="screen hidden">
+  <div class="topbar">
+    <button class="link" id="btnPinBack">← もどる</button>
+    <span class="name">じぶんのばんごう</span>
+    <span style="width:60px"></span>
+  </div>
+  <div class="login">
+    <div class="pin-step" id="pinStepText"></div>
+    <div class="pin-dots" id="pinChangeDots"><span></span><span></span><span></span><span></span></div>
+    <div class="msg-inline" id="pinChangeMsg"></div>
+    <div class="keypad" id="pinChangePad"></div>
+  </div>
+</section>
+
 <!-- ============ 親画面 ============ -->
 <section id="screenParent" class="screen hidden">
   <div class="topbar">
@@ -181,8 +200,9 @@
   <div class="pane" id="parentPanePending">
     <div class="section-title">承認待ち</div>
     <div id="pendingList"></div>
-    <div class="section-title">りれき（新しい順・全員分）</div>
+    <div class="section-title">りれき（最新3件）</div>
     <div id="recentList"></div>
+    <div class="note">それより前の記録は「ユーザー」タブ →「子の画面へ」で見たり、直したりできます。</div>
   </div>
 
   <div class="pane hidden" id="parentPaneUsers">
@@ -214,9 +234,34 @@
       <div class="note">変更後にホーム画面へ追加したショートカットに新しい名前が使われます（追加済みのものは作り直してください）。</div>
     </div>
 
-    <div class="section-title">PINロック端末</div>
+    <div class="section-title">ボーナス</div>
+    <div class="form">
+      <label class="check"><input type="checkbox" id="setBonusSame"> 1日3回目からのボーナス（1回+10円）</label>
+      <label class="check"><input type="checkbox" id="setBonusStreak"> 3日連続ボーナス（1回+10円）</label>
+    </div>
+
+    <div class="section-title">定期おこづかい</div>
+    <div class="form">
+      <label class="check"><input type="checkbox" id="setAlEnabled"> 毎月おこづかいを出す</label>
+      <label class="lbl" for="setAlAmount">金額（円）</label>
+      <input type="number" id="setAlAmount" inputmode="numeric" min="1">
+      <label class="lbl" for="setAlDay">毎月の支給日（その月に無い日は月末）</label>
+      <input type="number" id="setAlDay" inputmode="numeric" min="1" max="31">
+      <label class="lbl" for="setAlStart">開始年月</label>
+      <input type="month" id="setAlStart">
+      <div class="note">支給日を過ぎると子供の画面に「おこづかい発生中」が出て、押すと1か月分ずつ受け取れます（その月の支給日の日付で記録）。</div>
+    </div>
+
+    <div class="section-title">りれきの表示件数</div>
+    <div class="form">
+      <input type="number" id="setHistoryLimit" inputmode="numeric" min="5" max="500">
+      <div class="note">子供の画面のりれきは、最新のこの件数だけ表示します。それより前はカレンダーの日付から見られます。</div>
+    </div>
+    <button class="btn btn-main" id="btnSaveSettings">設定を保存</button>
+
+    <div class="section-title">PINをまちがえた端末</div>
     <div id="deviceList"></div>
-    <div class="note">ロック中でも子供の画面には「ちがいます」としか出ません。最近1か月の端末を表示します。</div>
+    <div class="note">ロック中でも子供の画面には「ちがいます」としか出ません。1度でもPINを間違えた端末を表示します（「非表示」にしても、また間違えると表示されます）。</div>
 
     <div class="section-title">メンテナンス</div>
     <button class="btn btn-sub" id="btnRepair">🛠 初期設定（シートの修復）</button>

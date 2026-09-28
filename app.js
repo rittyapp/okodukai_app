@@ -18,7 +18,6 @@
 const CFG = window.OKODUKAI_CONFIG;
 const BASE_URL = location.origin + location.pathname.replace(/index\.html$/, '');
 const COOL_MS = 3000; // ボタンを押した後、受け付けない時間
-const HISTORY_PAGE = 30;
 const DEFAULT_LOOK = { name: 'おこづかい帳', emoji: '🐷', color: '#ffd35c' };
 
 let API_URL = '';
@@ -63,7 +62,7 @@ function shareUrl() { return window.OKD_DEMO ? BASE_URL + '?demo=1' : BASE_URL +
 
 function show(screenId) {
   $('loading').classList.add('hidden');
-  ['screenSetup', 'screenLogin', 'screenChild', 'screenParent'].forEach((id) => $(id).classList.toggle('hidden', id !== screenId));
+  ['screenSetup', 'screenLogin', 'screenChild', 'screenPin', 'screenParent'].forEach((id) => $(id).classList.toggle('hidden', id !== screenId));
   window.scrollTo(0, 0);
 }
 
@@ -306,11 +305,15 @@ function bindStatic() {
     API_URL = '';
     location.replace(BASE_URL);
   };
+  // PCのキーボードでもキーパッドを操作できる（ログイン画面・番号変更画面）
   document.addEventListener('keydown', (e) => {
-    if ($('screenLogin').classList.contains('hidden') || $('dlg').open || !$('qrOverlay').classList.contains('hidden')) return;
-    if (/^[0-9]$/.test(e.key)) onKey(e.key);
-    else if (e.key === 'Backspace') onKey('del');
-    else if (e.key === 'Enter') onKey('ok');
+    if ($('dlg').open || !$('qrOverlay').classList.contains('hidden')) return;
+    const handler = !$('screenLogin').classList.contains('hidden') ? onKey
+      : !$('screenPin').classList.contains('hidden') ? onPinChangeKey : null;
+    if (!handler) return;
+    if (/^[0-9]$/.test(e.key)) handler(e.key);
+    else if (e.key === 'Backspace') handler('del');
+    else if (e.key === 'Enter') handler('ok');
   });
 
   // 子供画面
@@ -322,7 +325,9 @@ function bindStatic() {
   $('btnRequestUnlock').onclick = requestUnlock;
   $('btnConfirmBonus').onclick = confirmBonus;
   $('btnChoreEdit').onclick = () => { CHILD.editing = !CHILD.editing; renderChores(); };
-  $('btnMoreHistory').onclick = () => { CHILD.historyLimit += HISTORY_PAGE; renderHistory(); };
+  $('btnAllowance').onclick = receiveAllowance;
+  $('childName').onclick = () => { if (CHILD && !CHILD.asParent) openPinChange(); };
+  $('btnPinBack').onclick = () => openChild(ME.userId, false);
   $('calPrev').onclick = () => { CHILD.calMonth = addMonth(CHILD.calMonth, -1); CHILD.calSel = null; renderCalendar(); };
   $('calNext').onclick = () => { CHILD.calMonth = addMonth(CHILD.calMonth, 1); CHILD.calSel = null; renderCalendar(); };
 
@@ -333,6 +338,7 @@ function bindStatic() {
   $('btnSaveUser').onclick = saveUser;
   $('btnOpenSheet').onclick = openSheet;
   $('btnSaveAppName').onclick = saveLook;
+  $('btnSaveSettings').onclick = saveSettings;
   $('btnRepair').onclick = repair;
 }
 
@@ -384,14 +390,74 @@ function loginMsg(text, isErr) {
   el.classList.toggle('hidden', !text);
 }
 
-function buildKeypad() {
+/** 4行×3列のキーパッドを作る（ログイン画面と「じぶんのばんごう」画面で共通） */
+function buildPad(containerId, okId, okLabel, handler) {
   const keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'del', '0', 'ok'];
-  $('keypad').innerHTML = keys.map((k) => {
+  $(containerId).innerHTML = keys.map((k) => {
     if (k === 'del') return '<button type="button" class="key-del" data-k="del">削除</button>';
-    if (k === 'ok') return '<button type="button" class="key-ok" data-k="ok" id="keyOk">ログイン</button>';
+    if (k === 'ok') return '<button type="button" class="key-ok" data-k="ok" id="' + okId + '">' + okLabel + '</button>';
     return '<button type="button" data-k="' + k + '">' + k + '</button>';
   }).join('');
-  $('keypad').querySelectorAll('button').forEach((b) => { b.onclick = () => onKey(b.dataset.k); });
+  $(containerId).querySelectorAll('button').forEach((b) => { b.onclick = () => handler(b.dataset.k); });
+}
+function buildKeypad() {
+  buildPad('keypad', 'keyOk', 'ログイン', onKey);
+  buildPad('pinChangePad', 'pinKeyOk', 'けってい', onPinChangeKey);
+}
+
+// ---------- じぶんのばんごう（子供が自分のPINを変える） ----------
+
+let pinChange = { first: '', digits: [] };
+
+function openPinChange() {
+  pinChange = { first: '', digits: [] };
+  show('screenPin');
+  $('pinStepText').textContent = 'あたらしい番号を入れてね（4けた）';
+  $('pinChangeMsg').textContent = '';
+  renderPinChangeDots();
+}
+
+function renderPinChangeDots() {
+  document.querySelectorAll('#pinChangeDots span').forEach((s, i) => s.classList.toggle('filled', i < pinChange.digits.length));
+}
+
+function onPinChangeKey(k) {
+  if (isCooling('pinchg')) return;
+  $('pinChangeMsg').textContent = '';
+  if (k === 'del') pinChange.digits.pop();
+  else if (k === 'ok') return submitPinChange();
+  else if (pinChange.digits.length < 4) pinChange.digits.push(k);
+  renderPinChangeDots();
+}
+
+/** 1回目と2回目が同じときだけ変更する。変更後は新しい番号を見せてOKで完了 */
+async function submitPinChange() {
+  const p = pinChange;
+  if (p.digits.length !== 4) { $('pinChangeMsg').textContent = '4けたの数字を入れてね'; return; }
+  const v = p.digits.join('');
+  p.digits = [];
+  renderPinChangeDots();
+  const restart = (msg) => {
+    p.first = '';
+    $('pinStepText').textContent = 'あたらしい番号を入れてね（4けた）';
+    $('pinChangeMsg').textContent = msg;
+  };
+  if (!p.first) {
+    p.first = v;
+    $('pinStepText').textContent = 'たしかめるので、もういちど同じ番号を入れてね';
+    return;
+  }
+  if (p.first !== v) { restart('1回目とちがったよ。はじめからやりなおしてね'); return; }
+  cool('pinchg', $('pinKeyOk'), 3000);
+  try {
+    const r = await api('changeMyPin', { pin: v }, uuid());
+    await dialog('番号をかえたよ',
+      '<p style="text-align:center;font-size:18px">あなたが変更した番号は<br><b style="font-size:34px;letter-spacing:8px">' + esc(r.pin) + '</b><br>です</p>',
+      'OK', true);
+    openChild(ME.userId, false);
+  } catch (e) {
+    restart(e.message);
+  }
 }
 
 function renderPinDots() {
@@ -545,7 +611,7 @@ function enterApp(info) {
 // ===================== 子供画面 =====================
 
 function openChild(childId, asParent) {
-  CHILD = { id: childId, asParent, data: null, editing: false, historyLimit: HISTORY_PAGE, calMonth: null, calSel: null };
+  CHILD = { id: childId, asParent, data: null, extras: null, editing: false, calMonth: null, calSel: null };
   show('screenChild');
   document.querySelectorAll('#screenChild .parent-only').forEach((el) => el.classList.toggle('hidden', !asParent));
   $('btnBackToParent').classList.toggle('hidden', !asParent);
@@ -555,12 +621,18 @@ function openChild(childId, asParent) {
   $('choreGrid').innerHTML = '';
   $('childHistory').innerHTML = '<div class="note">よみこみ中…</div>';
   $('bonusConfirmBox').classList.add('hidden');
+  $('allowanceBox').classList.add('hidden');
   $('bonusBanner').classList.add('hidden');
   $('limitBox').classList.add('hidden');
+  $('childName').classList.toggle('clickable', !asParent);
   childTab('log');
   refreshChild();
 }
 
+/**
+ * 子供の画面を取り直す。先に残高・ボタン・りれきを出し、
+ * ボーナスやおこづかいの判定（重め）はそのあとで取りに行って足す（データが増えても待たせないため）
+ */
 async function refreshChild() {
   const seq = ++childSeq;
   try {
@@ -569,6 +641,10 @@ async function refreshChild() {
     CHILD.data = d;
     if (!CHILD.calMonth) CHILD.calMonth = d.today.day.slice(0, 7);
     renderChild();
+    const x = await api('dashboardExtras', { childId: CHILD.id });
+    if (seq !== childSeq || !CHILD) return;
+    CHILD.extras = x;
+    renderExtras();
   } catch (e) {
     fail(e);
   }
@@ -583,12 +659,26 @@ function childTab(tab) {
 
 function renderChild() {
   const d = CHILD.data;
-  $('childName').textContent = CHILD.asParent ? d.child.name + ' の画面' : d.child.name;
+  // 子供は自分の名前を押すと「じぶんのばんごう」を変えられる
+  $('childName').textContent = CHILD.asParent ? d.child.name + ' の画面' : d.child.name + ' ⚙';
   $('childBalance').textContent = yen(d.balance);
 
-  // 月初ボーナスの確認
+  const t = d.today;
+  $('limitBox').classList.toggle('hidden', CHILD.asParent || t.count < t.limit || t.unlocked);
+  $('btnRequestUnlock').disabled = t.unlockPending;
+  $('btnRequestUnlock').textContent = t.unlockPending ? 'おねがい中…（親の承認をまってね）' : '親に追加をおねがいする';
+
+  renderChores();
+  renderHistory();
+  if (CHILD.extras) renderExtras();
+  if (!$('childPaneCal').classList.contains('hidden')) renderCalendar();
+}
+
+/** ボーナス発生中・月初ボーナスの確認・おこづかい発生中（あとから届く分） */
+function renderExtras() {
+  const x = CHILD.extras;
   // 承認待ちが残っている月（blocked）はまだ確認できない
-  const months = d.bonus.pendingMonths;
+  const months = x.bonus.pendingMonths;
   const ready = months.filter((m) => !m.blocked);
   $('bonusConfirmBox').classList.toggle('hidden', !months.length);
   $('btnConfirmBonus').classList.toggle('hidden', !ready.length);
@@ -599,20 +689,30 @@ function renderChild() {
         : yen(m.amount))).join('<br>');
   }
 
+  // 定期おこづかい：押すたびに古い月から1か月分うけとる
+  const al = x.allowance || [];
+  $('allowanceBox').classList.toggle('hidden', !al.length);
+  if (al.length) {
+    $('allowanceText').innerHTML = '<b>💰 おこづかい発生中！</b><br>' +
+      al.map((a) => esc(a.label) + '：' + yen(a.amount)).join('<br>');
+    $('btnAllowance').textContent = al.length > 1 ? 'おこづかいをうけとる（あと' + al.length + '回）' : 'おこづかいをうけとる';
+  }
+
   const banners = [];
-  if (d.bonus.streakActive) banners.push('🔥 ボーナス発生中！ ' + Math.max(d.bonus.streakDays, 3) + '日連続（今日のお手伝いは1回につき+10円、来月1日にまとめてもらえるよ）');
-  if (d.bonus.sameDayActive) banners.push('⭐ 今日のつぎのお手伝いから「3回目ボーナス」+10円');
+  if (x.bonus.streakActive) banners.push('🔥 ボーナス発生中！ ' + Math.max(x.bonus.streakDays, 3) + '日連続（今日のお手伝いは1回につき+10円、来月1日にまとめてもらえるよ）');
+  if (x.bonus.sameDayActive) banners.push('⭐ 今日のつぎのお手伝いから「3回目ボーナス」+10円');
   $('bonusBanner').classList.toggle('hidden', !banners.length);
   $('bonusBanner').innerHTML = banners.map(esc).join('<br>');
+}
 
-  const t = d.today;
-  $('limitBox').classList.toggle('hidden', CHILD.asParent || t.count < t.limit || t.unlocked);
-  $('btnRequestUnlock').disabled = t.unlockPending;
-  $('btnRequestUnlock').textContent = t.unlockPending ? 'おねがい中…（親の承認をまってね）' : '親に追加をおねがいする';
-
-  renderChores();
-  renderHistory();
-  if (!$('childPaneCal').classList.contains('hidden')) renderCalendar();
+async function receiveAllowance() {
+  if (isCooling('allowance')) return;
+  cool('allowance', $('btnAllowance'));
+  try {
+    const r = await api('receiveAllowance', { childId: CHILD.id }, uuid());
+    toast(r.message);
+  } catch (e) { fail(e); }
+  refreshChild();
 }
 
 function renderChores() {
@@ -635,13 +735,18 @@ function renderChores() {
 async function pressChore(c, btn) {
   const key = 'chore_' + c.id;
   if (isCooling(key)) return;
-  cool(key, btn);
   const d = CHILD.data;
   const t = d.today;
   if (!CHILD.asParent && t.count >= t.limit && !t.unlocked) {
     toast('今日はもう上限だよ。', true);
     return;
   }
+  // スクロール中に指が当たっただけの誤操作を防ぐため、確認でOKを押したときだけ送る
+  const ok = await dialog(CHILD.asParent ? '記録しますか？' : 'おくる？',
+    '<p style="font-size:18px;text-align:center"><b>' + esc(c.name) + '</b>（' + yen(c.amount) + '）</p>',
+    CHILD.asParent ? '記録する' : 'おくる');
+  if (!ok) return;
+  cool(key, btn);
   const rid = uuid();
   // 先に画面へ反映しておき、あとでサーバーの内容で置き換える（反映待ちで固まって見えないように）
   d.history.unshift({
@@ -752,7 +857,10 @@ function itemHtml(r) {
     if (r.canCancel) acts.push('<button class="a-gray" data-act="cancel">取り消す</button>');
     if (r.canHide) acts.push('<button class="a-gray" data-act="hide">非表示</button>');
   }
-  const who = r.requestedBy && (!ME || r.requestedBy !== ME.name) ? ' ・ ' + esc(r.requestedBy) : '';
+  const who = (r.requestedBy && (!ME || r.requestedBy !== ME.name) ? ' ・ ' + esc(r.requestedBy) : '') +
+    // 最後に承認・却下した人だけを出す（何度切り替えても最後の1回）
+    ((r.status === 'approved' || r.status === 'rejected') && r.approvedBy && r.approvedBy !== r.requestedBy
+      ? ' ・ ' + (r.status === 'approved' ? '承認' : '却下') + '：' + esc(r.approvedBy) : '');
   return '<div class="item st-' + esc(r.status) + '" data-id="' + esc(r.id) + '">' +
     '<div class="r1"><span>' + (r.childName ? esc(r.childName) + '：' : '') + esc(r.name) + '</span>' +
     '<span class="' + (r.amount < 0 ? 'minus' : 'plus') + '">' + signedYen(r.amount) + '</span></div>' +
@@ -816,12 +924,13 @@ async function editEntry(r, after) {
 }
 
 function renderHistory() {
-  const rows = CHILD.data.history;
-  const shown = rows.slice(0, CHILD.historyLimit);
+  const rows = CHILD.data.history; // サーバーが最新 historyLimit 件だけ返す
   const el = $('childHistory');
-  el.innerHTML = shown.length ? shown.map((r) => itemHtml(r)).join('') : '<div class="note">まだりれきはありません。</div>';
-  bindItemActions(el, shown, refreshChild);
-  $('btnMoreHistory').classList.toggle('hidden', rows.length <= CHILD.historyLimit);
+  el.innerHTML = rows.length ? rows.map((r) => itemHtml(r)).join('') : '<div class="note">まだりれきはありません。</div>';
+  if (rows.length >= CHILD.data.historyLimit) {
+    el.innerHTML += '<div class="note">最新' + CHILD.data.historyLimit + '件を表示しています。それより前は「カレンダー」で日付をタップすると見られます。</div>';
+  }
+  bindItemActions(el, rows, refreshChild);
 }
 
 // ---------- カレンダー（月曜始まり・未来の月へは進めない） ----------
@@ -842,12 +951,13 @@ function renderCalendar() {
   $('calTitle').textContent = y + '年' + m + '月';
   $('calNext').disabled = ym >= thisMonth;
 
+  // 色付けは全期間の軽い一覧（[日付, 種類, 状態]）を使う（りれきの表示件数とは関係なく出る）
   const byDay = {};
   const usedDay = {}; // お金をつかった日（枠でかこむ）
-  d.history.forEach((r) => {
-    if (r.status !== 'approved' && r.status !== 'pending') return;
-    if (r.type === 'chore') byDay[r.day] = (byDay[r.day] || 0) + 1;
-    if (r.type === 'usage') usedDay[r.day] = true;
+  d.calendar.forEach(([day, type, status]) => {
+    if (status !== 'approved' && status !== 'pending') return;
+    if (type === 'chore') byDay[day] = (byDay[day] || 0) + 1;
+    if (type === 'usage') usedDay[day] = true;
   });
   const first = new Date(y, m - 1, 1);
   const lead = (first.getDay() + 6) % 7; // 月曜=0
@@ -875,14 +985,22 @@ function renderCalendar() {
   renderCalDetail();
 }
 
-function renderCalDetail() {
+async function renderCalDetail() {
   const el = $('calDetail');
   const sel = CHILD.calSel;
   if (!sel) { el.innerHTML = '<div class="note">日付をタップすると、その日の内容が見られるよ。</div>'; return; }
-  const rows = CHILD.data.history.filter((r) => r.day === sel);
   const [, m, d] = sel.split('-').map(Number);
-  el.innerHTML = '<div class="section-title">' + m + '月' + d + '日</div>' +
-    (rows.length ? rows.map((r) => itemHtml(r)).join('') : '<div class="note">この日のきろくはありません。</div>');
+  const title = '<div class="section-title">' + m + '月' + d + '日</div>';
+  const hist = CHILD.data.history;
+  let rows = hist.filter((r) => r.day === sel);
+  // りれきに入っていない古い日は、その日の分だけサーバーから取る
+  const oldest = hist.length ? hist[hist.length - 1].day : '';
+  if (hist.length >= CHILD.data.historyLimit && sel <= oldest) {
+    el.innerHTML = title + '<div class="note">よみこみ中…</div>';
+    try { rows = await api('dayEntries', { childId: CHILD.id, day: sel }); } catch (e) { fail(e); return; }
+    if (CHILD.calSel !== sel) return;
+  }
+  el.innerHTML = title + (rows.length ? rows.map((r) => itemHtml(r)).join('') : '<div class="note">この日のきろくはありません。</div>');
   bindItemActions(el, rows, refreshChild);
 }
 
@@ -923,7 +1041,7 @@ async function refreshPending() {
 async function refreshUsers() {
   try {
     USERS = await api('users');
-    $('usersMe').textContent = USERS.me.name;
+    $('usersMe').textContent = USERS.me.name + (USERS.me.isOwner ? '（マスター）' : '');
     $('childrenList').innerHTML = USERS.children.length ? USERS.children.map((u) =>
       '<div class="card"><div class="user-row"><div class="who">' + esc(u.name) + (u.active ? '' : '（無効）') +
       '<small>' + (u.hasPin ? 'PIN登録済み' : 'PINなし') + (u.email ? ' ・ ' + esc(u.email) : '') + '</small></div>' +
@@ -932,11 +1050,12 @@ async function refreshUsers() {
       (u.active ? '<button class="a-approve" data-open="' + esc(u.id) + '">子の画面へ</button>' : '') +
       '<button class="a-edit" data-edit="' + esc(u.id) + '">編集</button></div></div>'
     ).join('') : '<div class="note">子供がまだ登録されていません。下の「ユーザー変更」から追加してください。</div>';
+    // マスター（持ち主）は変更できないので、編集ボタンを出さない
     const others = USERS.parents.filter((p) => !p.isMe);
     $('parentsList').innerHTML = others.length ? others.map((u) =>
-      '<div class="card"><div class="user-row"><div class="who">' + esc(u.name) + (u.active ? '' : '（無効）') +
+      '<div class="card"><div class="user-row"><div class="who">' + esc(u.name) + (u.isOwner ? '（マスター）' : '') + (u.active ? '' : '（無効）') +
       '<small>' + esc(u.email) + '</small></div>' +
-      '<button class="a-edit btn-small" data-edit="' + esc(u.id) + '">編集</button></div></div>'
+      (u.isOwner ? '' : '<button class="a-edit btn-small" data-edit="' + esc(u.id) + '">編集</button>') + '</div></div>'
     ).join('') : '<div class="note">ほかの親はいません。</div>';
     document.querySelectorAll('#parentPaneUsers [data-open]').forEach((b) => { b.onclick = () => openChild(b.dataset.open, true); });
     document.querySelectorAll('#parentPaneUsers [data-edit]').forEach((b) => {
@@ -946,7 +1065,7 @@ async function refreshUsers() {
     const cur = $('uSelect').value;
     $('uSelect').innerHTML = '<option value="">＋ 新しく追加する</option>' +
       '<option value="' + esc(USERS.me.id) + '">' + esc(USERS.me.name) + '（あなた）</option>' +
-      all.filter((u) => u.id !== USERS.me.id).map((u) => '<option value="' + esc(u.id) + '">' + esc(u.name) + '（' + (USERS.children.indexOf(u) >= 0 ? '子供' : '親') + '）</option>').join('');
+      all.filter((u) => u.id !== USERS.me.id && !u.isOwner).map((u) => '<option value="' + esc(u.id) + '">' + esc(u.name) + '（' + (USERS.children.indexOf(u) >= 0 ? '子供' : '親') + '）</option>').join('');
     $('uSelect').value = all.some((u) => u.id === cur) ? cur : '';
     fillUserForm();
   } catch (e) { fail(e); }
@@ -959,10 +1078,14 @@ function fillUserForm() {
   $('uName').value = u ? u.name : '';
   $('uRole').value = u ? u.role : 'child';
   $('uEmail').value = u ? u.email : '';
-  $('uPin').value = '';
-  $('uPin').placeholder = u && u.hasPin ? '4桁PIN（登録済み。空欄なら変更しない）' : '4桁PIN（子供のみ）';
+  // 親には子供の今の番号（子供が自分で変えた番号も）を見せる
+  $('uPin').value = u && u.pin ? u.pin : '';
+  $('uPin').placeholder = '4桁PIN（子供のみ）';
   $('uActive').checked = u ? u.active : true;
-  $('btnSaveUser').textContent = u ? '変更を保存する' : '追加する';
+  // マスターは表示名だけ変えられる
+  const ownerLock = !!(u && u.isOwner);
+  ['uRole', 'uEmail', 'uPin', 'uActive'].forEach((id) => { $(id).disabled = ownerLock; });
+  $('btnSaveUser').textContent = u ? (ownerLock ? '表示名を保存する' : '変更を保存する') : '追加する';
 }
 
 async function saveUser() {
@@ -985,6 +1108,14 @@ async function refreshSettings() {
     $('appNameInput').value = s.appName;
     ensureIconFields(s.appIcon || {});
     $('settingsVersion').textContent = 'アプリ v' + CFG.VERSION + ' / サーバー v' + s.version;
+    // ボーナス・定期おこづかい・りれきの表示件数
+    $('setBonusSame').checked = s.bonusSameDay;
+    $('setBonusStreak').checked = s.bonusStreak;
+    $('setAlEnabled').checked = s.allowance.enabled;
+    $('setAlAmount').value = s.allowance.amount || '';
+    $('setAlDay').value = s.allowance.day || 1;
+    $('setAlStart').value = s.allowance.start || new Date().toISOString().slice(0, 7);
+    $('setHistoryLimit').value = s.historyLimit;
     const el = $('deviceList');
     // 全体ロック（端末を変えながらの総当たり対策）が働いているとき
     const globalHtml = s.globalLockUntil
@@ -992,16 +1123,25 @@ async function refreshSettings() {
         '<div class="r2">PINの失敗が続いたため、' + fmtDateTime(s.globalLockUntil) + 'まで全員のPINログインを止めています。</div>' +
         '<div class="acts"><button class="a-approve" data-dev="*">全体ロックを解除する</button></div></div>'
       : '';
+    // 1度でもPINを間違えた端末だけを出す（親が「非表示」にするまで残る。また間違えたら再び出る）
     el.innerHTML = globalHtml + (s.devices.length ? s.devices.map((d) => {
       const state = d.hardLocked ? '完全ロック' : d.locked ? '一時ロック（' + fmtDateTime(d.lockedUntil) + 'まで）' : 'ロックなし';
       return '<div class="item"><div class="r1"><span>端末 ' + esc(d.shortId) + '…</span><span>' + state + '</span></div>' +
-        '<div class="r2">失敗 ' + d.failCount + '回 ・ 最終 ' + fmtDateTime(d.updatedAt) + '</div>' +
-        (d.locked || d.failCount ? '<div class="acts"><button class="a-approve" data-dev="' + esc(d.deviceId) + '">解除する</button></div>' : '') + '</div>';
-    }).join('') : '<div class="note">記録はありません。</div>');
+        '<div class="r2">これまでの失敗 ' + d.totalFails + '回（連続 ' + d.failCount + '回）・ 最終 ' + fmtDateTime(d.updatedAt) + '</div>' +
+        '<div class="acts">' + (d.locked ? '<button class="a-approve" data-dev="' + esc(d.deviceId) + '">解除する</button>' : '') +
+        '<button class="a-gray" data-hide-dev="' + esc(d.deviceId) + '">非表示</button></div></div>';
+    }).join('') : '<div class="note">PINを間違えた端末はありません。</div>');
     el.querySelectorAll('[data-dev]').forEach((b) => {
       b.onclick = async () => {
         cool('dev', b);
         try { toast((await api('unlockDevice', { deviceId: b.dataset.dev }, uuid())).message); } catch (e) { fail(e); }
+        refreshSettings();
+      };
+    });
+    el.querySelectorAll('[data-hide-dev]').forEach((b) => {
+      b.onclick = async () => {
+        cool('hidedev', b);
+        try { toast((await api('hideDevice', { deviceId: b.dataset.hideDev }, uuid())).message); } catch (e) { fail(e); }
         refreshSettings();
       };
     });
@@ -1036,6 +1176,22 @@ async function saveLook() {
     const r = await api('setAppName', { name: $('appNameInput').value, emoji: $('iconEmoji').value, color: $('iconColor').value }, uuid());
     applyLook({ name: r.appName, emoji: r.appIcon.emoji, color: r.appIcon.color });
     toast('保存しました。ホーム画面のショートカットは作り直すと新しい名前・アイコンになります。');
+  } catch (e) { fail(e); }
+}
+
+/** 設定タブ：ボーナスの有効/無効・定期おこづかい・りれきの表示件数を保存 */
+async function saveSettings() {
+  if (isCooling('settings')) return;
+  cool('settings', $('btnSaveSettings'));
+  try {
+    const r = await api('saveSettings', {
+      bonusSameDay: $('setBonusSame').checked,
+      bonusStreak: $('setBonusStreak').checked,
+      allowance: { enabled: $('setAlEnabled').checked, amount: $('setAlAmount').value, day: $('setAlDay').value, start: $('setAlStart').value },
+      historyLimit: $('setHistoryLimit').value
+    }, uuid());
+    toast(r.message);
+    refreshSettings();
   } catch (e) { fail(e); }
 }
 

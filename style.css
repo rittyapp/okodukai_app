@@ -91,6 +91,9 @@ button:disabled { opacity: .6; cursor: default; }
 /* ---------- 共通UI ---------- */
 .topbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; gap: 8px; min-height: 32px; }
 .topbar .name { font-weight: bold; flex: 1; text-align: center; }
+.topbar .name.clickable { cursor: pointer; text-decoration: underline dotted; }
+.pin-step { font-size: 16px; font-weight: bold; margin: 12px 0 8px; text-align: center; }
+.form .lbl { display: block; font-size: 13px; color: #666; margin-top: 10px; }
 .tabbar { display: flex; gap: 6px; margin-bottom: 12px; }
 .tabbar button { flex: 1; padding: 10px 4px; border: none; background: #eee; font-weight: bold; border-radius: 10px; font-size: 14px; cursor: pointer; }
 .tabbar button.active { background: var(--accent); }

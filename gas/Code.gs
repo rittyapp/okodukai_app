@@ -24,7 +24,7 @@
  */
 
 // ===================== 設定値 =====================
-const SERVER_VERSION = '3.0.5';
+const SERVER_VERSION = '3.0.7';
 
 // 公開してよい情報のみ。クライアントIDはブラウザに渡る前提の値で、秘密ではない。
 const DEFAULT_OAUTH_CLIENT_ID = '337708567191-tpqbqqinfgm5bpje56ccdj2gmkphdngi.apps.googleusercontent.com';
@@ -691,6 +691,8 @@ function appendMemo_(memo, add) {
   memo = String(memo || '');
   return memo.endsWith(add) ? memo : memo + add; // 同じ追記が続かないように
 }
+/** 残高に入る記録：承認済み＋子供が申請中の「つかった」（使ったお金はすぐ残高から引く） */
+function inBalance_(r) { return r.Status === 'approved' || (r.Status === 'pending' && r.Type === 'usage'); }
 /** ボーナスや回数制限の対象になる「お手伝い」（却下・取消は数えない） */
 function isCountedChore_(r) { return r.Type === 'chore' && (r.Status === 'approved' || r.Status === 'pending'); }
 
@@ -699,11 +701,15 @@ function labelOf_(r) {
   return { usage: 'つかった', adjustment: '残高調整', unlock_request: '上限追加のおねがい', bonus: 'ボーナス' }[r.Type] || String(r.Type);
 }
 
-/** 「取り消す」は子供だけ（親は却下を使う）。親が承認済みのものは取り消せない */
+/**
+ * 「取り消す」は子供だけ（親は却下を使う）。取り消せるのは親が承認する前の、自分で申請したものだけ。
+ * 旧データの「つかった」は子供が押すと自動で承認済みになっていたので、承認者が本人のものは取り消せる。
+ */
 function canCancel_(r, viewer) {
-  if (r.Status !== 'pending') return false;
   if (viewer.Role !== 'child' || String(r.ChildId) !== viewer.UserId) return false;
   if (r.Type === 'bonus' || r.Type === 'adjustment') return false;
+  const selfApprovedUsage = r.Type === 'usage' && r.Status === 'approved' && String(r.ApprovedBy) === String(viewer.Name);
+  if (r.Status !== 'pending' && !selfApprovedUsage) return false;
   // 押した本人だけ取り消せる（旧データは RequestedById が無いので名前で判定）
   return r.RequestedById ? String(r.RequestedById) === viewer.UserId : String(r.RequestedBy) === String(viewer.Name);
 }
@@ -736,7 +742,7 @@ function outRow_(r, viewer, childNames) {
 function balancesByChild_() {
   const b = {};
   ledgerRows_().forEach(function (r) {
-    if (r.Status === 'approved') b[String(r.ChildId)] = (b[String(r.ChildId)] || 0) + (Number(r.Amount) || 0);
+    if (inBalance_(r)) b[String(r.ChildId)] = (b[String(r.ChildId)] || 0) + (Number(r.Amount) || 0);
   });
   return b;
 }
@@ -844,7 +850,7 @@ function apiDashboard_(ctx) {
   return {
     child: { id: child.UserId, name: child.Name },
     viewerRole: me.Role,
-    balance: rows.reduce(function (s, r) { return r.Status === 'approved' ? s + (Number(r.Amount) || 0) : s; }, 0),
+    balance: rows.reduce(function (s, r) { return inBalance_(r) ? s + (Number(r.Amount) || 0) : s; }, 0),
     chores: listChores_(),
     history: history,
     today: {
@@ -908,19 +914,22 @@ function apiAddUsage_(ctx) {
   const child = targetChild_(me, ctx.args.childId);
   const amount = -Math.abs(Math.round(Number(ctx.args.amount)));
   if (!amount) throw new Error('つかった金額を入力してね。');
+  // 子供が記録したものは申請中（残高からはすぐ引く）。親が承認すると子供は取り消せなくなる
+  const isParent = me.Role === 'parent';
   addLedger_({
-    ChildId: child.UserId, Type: 'usage', Status: 'approved', Amount: amount,
+    ChildId: child.UserId, Type: 'usage', Status: isParent ? 'approved' : 'pending', Amount: amount,
     ChoreName: String(ctx.args.memo || '').trim(), Memo: '',
-    RequestedBy: me.Name, RequestedById: me.UserId, ApprovedBy: me.Name, ApprovedAt: new Date()
+    RequestedBy: me.Name, RequestedById: me.UserId, ApprovedBy: isParent ? me.Name : '', ApprovedAt: isParent ? new Date() : ''
   });
-  return { message: 'きろくしたよ。' };
+  return { message: isParent ? 'きろくしました。' : 'きろくしたよ。親が確認するまでは自分で取り消せるよ。' };
 }
 
 function apiCancelEntry_(ctx) {
   const me = requireUser_(ctx.token);
   const r = findLedger_(ctx.args.id);
   if (!canCancel_(r, me)) throw new Error('この記録は取り消せません。');
-  updateRow_(SHEET_LEDGER, r._row, { Status: 'cancelled', Memo: appendMemo_(r.Memo, '［' + me.Name + 'が取消］') });
+  // 自分で取り消したものは、そのまま非表示にする（スプレッドシートには残る）
+  updateRow_(SHEET_LEDGER, r._row, { Status: 'cancelled', Hidden: true, Memo: appendMemo_(r.Memo, '［' + me.Name + 'が取消］') });
   return { message: '取り消しました。' };
 }
 

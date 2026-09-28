@@ -690,7 +690,7 @@ async function addUsage() {
   $('usageMemo').value = '';
   const rid = uuid();
   const d = CHILD.data;
-  d.history.unshift({ id: 'tmp_' + rid, ts: new Date().toISOString(), day: d.today.day, type: 'usage', name: memo || 'つかった', status: 'approved', amount: -Math.abs(amount), memo: '', requestedBy: ME.name });
+  d.history.unshift({ id: 'tmp_' + rid, ts: new Date().toISOString(), day: d.today.day, type: 'usage', name: memo || 'つかった', status: CHILD.asParent ? 'approved' : 'pending', amount: -Math.abs(amount), memo: '', requestedBy: ME.name });
   d.balance -= Math.abs(amount);
   renderChild();
   try {
@@ -843,8 +843,11 @@ function renderCalendar() {
   $('calNext').disabled = ym >= thisMonth;
 
   const byDay = {};
+  const usedDay = {}; // お金をつかった日（枠でかこむ）
   d.history.forEach((r) => {
-    if (r.type === 'chore' && (r.status === 'approved' || r.status === 'pending')) byDay[r.day] = (byDay[r.day] || 0) + 1;
+    if (r.status !== 'approved' && r.status !== 'pending') return;
+    if (r.type === 'chore') byDay[r.day] = (byDay[r.day] || 0) + 1;
+    if (r.type === 'usage') usedDay[r.day] = true;
   });
   const first = new Date(y, m - 1, 1);
   const lead = (first.getDay() + 6) % 7; // 月曜=0
@@ -859,6 +862,7 @@ function renderCalendar() {
     if (key > today) cls.push('future');
     else if (n >= 3) cls.push('d3');
     else if (n >= 1) cls.push('d1');
+    if (usedDay[key]) cls.push('used');
     if (key === today) cls.push('today');
     if (key === CHILD.calSel) cls.push('sel');
     html += '<button type="button" class="' + cls.join(' ') + '" data-day="' + key + '"' + (key > today ? ' disabled' : '') + '>' +

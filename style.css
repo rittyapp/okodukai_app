@@ -165,11 +165,12 @@ button:disabled { opacity: .6; cursor: default; }
 .cal-day.d3 { background: var(--cal3); font-weight: bold; }
 .cal-day.today { box-shadow: 0 0 0 2px var(--orange) inset; }
 .cal-day.sel { outline: 3px solid #5b8def; }
+.cal-day.used { border: 2px solid var(--minus); }
 .cal-day.future { background: transparent; color: #ccc; cursor: default; }
 .cal-day.blank { background: transparent; cursor: default; }
-.cal-legend { display: flex; gap: 16px; font-size: 12px; color: var(--sub); margin: 10px 0; }
+.cal-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12px; color: var(--sub); margin: 10px 0; }
 .lg { display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 4px; vertical-align: -1px; }
-.lg1 { background: var(--cal1); } .lg3 { background: var(--cal3); }
+.lg1 { background: var(--cal1); } .lg3 { background: var(--cal3); } .lgu { border: 2px solid var(--minus); box-sizing: border-box; }
 
 /* ---------- トースト・ダイアログ ---------- */
 .toast {

@@ -1,6 +1,6 @@
 {
-  "name": "おこづかい帳",
-  "short_name": "おこづかい帳",
+  "name": "パパ貯金",
+  "short_name": "パパ貯金",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

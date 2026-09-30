@@ -625,7 +625,7 @@ function openChild(childId, asParent) {
   $('bonusBanner').classList.add('hidden');
   $('limitBox').classList.add('hidden');
   $('childName').classList.toggle('clickable', !asParent);
-  childTab('log');
+  childTab(lsGet('okd_child_tab') || 'money');
   refreshChild();
 }
 
@@ -650,18 +650,26 @@ async function refreshChild() {
   }
 }
 
+/** 子供の画面のタブ：ざんだか／おてつだい／カレンダー。最後に開いたタブを端末に覚えておく */
 function childTab(tab) {
+  if (['money', 'chore', 'cal'].indexOf(tab) < 0) tab = 'money';
+  lsSet('okd_child_tab', tab);
   document.querySelectorAll('#screenChild .tabbar button').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
-  $('childPaneLog').classList.toggle('hidden', tab !== 'log');
+  $('childPaneMoney').classList.toggle('hidden', tab !== 'money');
+  $('childPaneChore').classList.toggle('hidden', tab !== 'chore');
   $('childPaneCal').classList.toggle('hidden', tab !== 'cal');
   if (tab === 'cal' && CHILD && CHILD.data) renderCalendar();
 }
+
+/** 「おてつだい」タブに出す記録（それ以外は「ざんだか」タブ） */
+function isChoreRow(r) { return r.type === 'chore' || r.type === 'unlock_request'; }
 
 function renderChild() {
   const d = CHILD.data;
   // 子供は自分の名前を押すと「じぶんのばんごう」を変えられる
   $('childName').textContent = CHILD.asParent ? d.child.name + ' の画面' : d.child.name + ' ⚙';
   $('childBalance').textContent = yen(d.balance);
+  $('childBalance2').textContent = yen(d.balance);
 
   const t = d.today;
   $('limitBox').classList.toggle('hidden', CHILD.asParent || t.count < t.limit || t.unlocked);
@@ -697,6 +705,9 @@ function renderExtras() {
       al.map((a) => esc(a.label) + '：' + yen(a.amount)).join('<br>');
     $('btnAllowance').textContent = al.length > 1 ? 'おこづかいをうけとる（あと' + al.length + '回）' : 'おこづかいをうけとる';
   }
+
+  // 受け取れるおこづかい・ボーナスがあるときは「ざんだか」タブに●を付ける（おてつだいタブにいても気づけるように）
+  $('moneyDot').classList.toggle('hidden', !(al.length || ready.length));
 
   const banners = [];
   if (x.bonus.streakActive) banners.push('🔥 ボーナス発生中！ ' + Math.max(x.bonus.streakDays, 3) + '日連続（今日のお手伝いは1回につき+10円、来月1日にまとめてもらえるよ）');
@@ -923,10 +934,15 @@ async function editEntry(r, after) {
   after();
 }
 
+/** りれきを「ざんだか」（お金の出入り）と「おてつだい」に分けて出す。サーバーはそれぞれ最新 historyLimit 件を返す */
 function renderHistory() {
-  const rows = CHILD.data.history; // サーバーが最新 historyLimit 件だけ返す
-  const el = $('childHistory');
-  el.innerHTML = rows.length ? rows.map((r) => itemHtml(r)).join('') : '<div class="note">まだりれきはありません。</div>';
+  const all = CHILD.data.history;
+  renderHistoryList($('childHistory'), all.filter((r) => !isChoreRow(r)), 'お金の出入りのりれきはまだありません。');
+  renderHistoryList($('choreHistory'), all.filter(isChoreRow), 'おてつだいのりれきはまだありません。');
+}
+
+function renderHistoryList(el, rows, emptyText) {
+  el.innerHTML = rows.length ? rows.map((r) => itemHtml(r)).join('') : '<div class="note">' + emptyText + '</div>';
   if (rows.length >= CHILD.data.historyLimit) {
     el.innerHTML += '<div class="note">最新' + CHILD.data.historyLimit + '件を表示しています。それより前は「カレンダー」で日付をタップすると見られます。</div>';
   }
@@ -951,13 +967,18 @@ function renderCalendar() {
   $('calTitle').textContent = y + '年' + m + '月';
   $('calNext').disabled = ym >= thisMonth;
 
-  // 色付けは全期間の軽い一覧（[日付, 種類, 状態]）を使う（りれきの表示件数とは関係なく出る）
+  // 全期間の軽い一覧（[日付, 種類, 状態, 金額]）から、日を開かなくてもわかる印を作る
+  //   背景色＝お手伝いの回数、赤い枠＝お金をつかった日、＋＝お金がふえた日（おこづかい・ボーナス・残高調整）、・＝申請中あり
   const byDay = {};
-  const usedDay = {}; // お金をつかった日（枠でかこむ）
-  d.calendar.forEach(([day, type, status]) => {
+  const usedDay = {};
+  const inDay = {};
+  const waitDay = {};
+  d.calendar.forEach(([day, type, status, amount]) => {
     if (status !== 'approved' && status !== 'pending') return;
+    if (status === 'pending') waitDay[day] = true;
     if (type === 'chore') byDay[day] = (byDay[day] || 0) + 1;
-    if (type === 'usage') usedDay[day] = true;
+    else if (type === 'usage' || amount < 0) usedDay[day] = true;
+    else if (amount > 0) inDay[day] = true;
   });
   const first = new Date(y, m - 1, 1);
   const lead = (first.getDay() + 6) % 7; // 月曜=0
@@ -975,7 +996,9 @@ function renderCalendar() {
     if (usedDay[key]) cls.push('used');
     if (key === today) cls.push('today');
     if (key === CHILD.calSel) cls.push('sel');
+    const marks = (inDay[key] ? '<b class="mk mk-in">＋</b>' : '') + (waitDay[key] ? '<b class="mk mk-wait">・</b>' : '');
     html += '<button type="button" class="' + cls.join(' ') + '" data-day="' + key + '"' + (key > today ? ' disabled' : '') + '>' +
+      (marks ? '<span class="mk-row">' + marks + '</span>' : '') +
       day + (n ? '<small>' + n + '回</small>' : '') + '</button>';
   }
   $('calGrid').innerHTML = html;
@@ -993,9 +1016,11 @@ async function renderCalDetail() {
   const title = '<div class="section-title">' + m + '月' + d + '日</div>';
   const hist = CHILD.data.history;
   let rows = hist.filter((r) => r.day === sel);
-  // りれきに入っていない古い日は、その日の分だけサーバーから取る
-  const oldest = hist.length ? hist[hist.length - 1].day : '';
-  if (hist.length >= CHILD.data.historyLimit && sel <= oldest) {
+  // りれき（おてつだい・お金それぞれ最新N件）に入っていない古い日は、その日の分だけサーバーから取る
+  const lim = CHILD.data.historyLimit;
+  const needFetch = [hist.filter(isChoreRow), hist.filter((r) => !isChoreRow(r))]
+    .some((list) => list.length >= lim && sel <= list[list.length - 1].day);
+  if (needFetch) {
     el.innerHTML = title + '<div class="note">よみこみ中…</div>';
     try { rows = await api('dayEntries', { childId: CHILD.id, day: sel }); } catch (e) { fail(e); return; }
     if (CHILD.calSel !== sel) return;
@@ -1046,21 +1071,16 @@ async function refreshUsers() {
       '<div class="card"><div class="user-row"><div class="who">' + esc(u.name) + (u.active ? '' : '（無効）') +
       '<small>' + (u.hasPin ? 'PIN登録済み' : 'PINなし') + (u.email ? ' ・ ' + esc(u.email) : '') + '</small></div>' +
       '<div class="bal">' + yen(u.balance) + '</div></div>' +
-      '<div class="user-acts">' +
-      (u.active ? '<button class="a-approve" data-open="' + esc(u.id) + '">子の画面へ</button>' : '') +
-      '<button class="a-edit" data-edit="' + esc(u.id) + '">編集</button></div></div>'
+      // 編集は一番下の「ユーザー変更」で選んで行う
+      (u.active ? '<div class="user-acts"><button class="a-approve" data-open="' + esc(u.id) + '">子の画面へ</button></div>' : '') + '</div>'
     ).join('') : '<div class="note">子供がまだ登録されていません。下の「ユーザー変更」から追加してください。</div>';
-    // マスター（持ち主）は変更できないので、編集ボタンを出さない
+    // 親は一覧だけ（マスターは変更できない。ほかの親の編集は一番下の「ユーザー変更」で）
     const others = USERS.parents.filter((p) => !p.isMe);
     $('parentsList').innerHTML = others.length ? others.map((u) =>
       '<div class="card"><div class="user-row"><div class="who">' + esc(u.name) + (u.isOwner ? '（マスター）' : '') + (u.active ? '' : '（無効）') +
-      '<small>' + esc(u.email) + '</small></div>' +
-      (u.isOwner ? '' : '<button class="a-edit btn-small" data-edit="' + esc(u.id) + '">編集</button>') + '</div></div>'
+      '<small>' + esc(u.email) + '</small></div></div></div>'
     ).join('') : '<div class="note">ほかの親はいません。</div>';
     document.querySelectorAll('#parentPaneUsers [data-open]').forEach((b) => { b.onclick = () => openChild(b.dataset.open, true); });
-    document.querySelectorAll('#parentPaneUsers [data-edit]').forEach((b) => {
-      b.onclick = () => { $('uSelect').value = b.dataset.edit; fillUserForm(); $('uSelect').scrollIntoView({ behavior: 'smooth' }); };
-    });
     const all = USERS.children.concat(USERS.parents);
     const cur = $('uSelect').value;
     $('uSelect').innerHTML = '<option value="">＋ 新しく追加する</option>' +
@@ -1131,6 +1151,8 @@ async function refreshSettings() {
         '<div class="acts">' + (d.locked ? '<button class="a-approve" data-dev="' + esc(d.deviceId) + '">解除する</button>' : '') +
         '<button class="a-gray" data-hide-dev="' + esc(d.deviceId) + '">非表示</button></div></div>';
     }).join('') : '<div class="note">PINを間違えた端末はありません。</div>');
+    // 失敗した端末があるときは「心当たりがなければURLを変える」案内を出す
+    $('deviceWarn').classList.toggle('hidden', !s.devices.length);
     el.querySelectorAll('[data-dev]').forEach((b) => {
       b.onclick = async () => {
         cool('dev', b);

@@ -94,6 +94,17 @@ button:disabled { opacity: .6; cursor: default; }
 .topbar .name.clickable { cursor: pointer; text-decoration: underline dotted; }
 .pin-step { font-size: 16px; font-weight: bold; margin: 12px 0 8px; text-align: center; }
 .form .lbl { display: block; font-size: 13px; color: #666; margin-top: 10px; }
+.warn-box { background: #fff4e5; border: 1px solid #f0b35a; border-radius: 12px; padding: 12px; font-size: 13px; line-height: 1.6; margin-top: 10px; }
+.tab-dot { color: var(--minus); font-size: 10px; margin-left: 3px; vertical-align: top; }
+.chore-balance { text-align: right; font-size: 14px; color: var(--sub); margin-bottom: 8px; }
+.chore-balance b { color: var(--orange); font-size: 18px; }
+/* カレンダーの印：＋＝お金がふえた日、赤い枠＝つかった日、・＝申請中あり */
+.cal-day { position: relative; }
+.cal-day .mk-row { position: absolute; top: 2px; right: 3px; display: flex; gap: 1px; line-height: 1; }
+.mk { font-size: 11px; font-weight: bold; }
+.mk-in { color: #2f6fd6; }
+.mk-wait { color: #d98a00; font-size: 14px; }
+.cal-legend .mk { margin-right: 3px; }
 .tabbar { display: flex; gap: 6px; margin-bottom: 12px; }
 .tabbar button { flex: 1; padding: 10px 4px; border: none; background: #eee; font-weight: bold; border-radius: 10px; font-size: 14px; cursor: pointer; }
 .tabbar button.active { background: var(--accent); }

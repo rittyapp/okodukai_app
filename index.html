@@ -102,11 +102,13 @@
     <button class="link" id="btnChildLogout">ログアウト</button>
   </div>
   <div class="tabbar">
-    <button data-tab="log" class="active">きろく</button>
+    <button data-tab="money" class="active">ざんだか<span class="tab-dot hidden" id="moneyDot">●</span></button>
+    <button data-tab="chore">おてつだい</button>
     <button data-tab="cal">カレンダー</button>
   </div>
 
-  <div class="pane" id="childPaneLog">
+  <!-- ざんだか：残高・おこづかい・ボーナス・つかったきろく・お手伝い以外のりれき -->
+  <div class="pane" id="childPaneMoney">
     <div class="balance-card">
       <div class="balance-label">いまの残高</div>
       <div class="balance-amount" id="childBalance">-</div>
@@ -120,18 +122,6 @@
     <div class="bonus-card hidden" id="bonusConfirmBox">
       <div id="bonusConfirmText"></div>
       <button class="btn btn-main" id="btnConfirmBonus">🎁 ボーナスを確認</button>
-    </div>
-
-    <div class="section-title">おてつだいボタン</div>
-    <div class="bonus-banner hidden" id="bonusBanner"></div>
-    <div class="chore-grid" id="choreGrid"></div>
-    <div class="parent-only hidden" id="choreEditBar">
-      <button class="btn btn-sub" id="btnChoreEdit">✏ お手伝い編集</button>
-    </div>
-
-    <div class="limit-box hidden" id="limitBox">
-      きょうはもう上限だよ。もっとやりたい時は親におねがいしてみよう。
-      <button class="btn btn-main" id="btnRequestUnlock">親に追加をおねがいする</button>
     </div>
 
     <div class="parent-only hidden" id="adjustBox">
@@ -150,8 +140,26 @@
       <button class="btn btn-main" id="btnUsage">きろくする</button>
     </div>
 
-    <div class="section-title">りれき</div>
+    <div class="section-title">りれき（お金の出入り）</div>
     <div id="childHistory"></div>
+  </div>
+
+  <!-- おてつだい：お手伝いボタン・お手伝いのりれき -->
+  <div class="pane hidden" id="childPaneChore">
+    <div class="chore-balance">いまの残高 <b id="childBalance2">-</b></div>
+    <div class="bonus-banner hidden" id="bonusBanner"></div>
+    <div class="chore-grid" id="choreGrid"></div>
+    <div class="parent-only hidden" id="choreEditBar">
+      <button class="btn btn-sub" id="btnChoreEdit">✏ お手伝い編集</button>
+    </div>
+
+    <div class="limit-box hidden" id="limitBox">
+      きょうはもう上限だよ。もっとやりたい時は親におねがいしてみよう。
+      <button class="btn btn-main" id="btnRequestUnlock">親に追加をおねがいする</button>
+    </div>
+
+    <div class="section-title">おてつだいのりれき</div>
+    <div id="choreHistory"></div>
   </div>
 
   <div class="pane hidden" id="childPaneCal">
@@ -164,7 +172,9 @@
     <div class="cal-legend">
       <span><i class="lg lg1"></i>お手伝いした日</span>
       <span><i class="lg lg3"></i>3回以上した日</span>
+      <span><b class="mk mk-in">＋</b>お金がふえた日</span>
       <span><i class="lg lgu"></i>お金をつかった日</span>
+      <span><b class="mk mk-wait">・</b>申請中あり</span>
     </div>
     <div id="calDetail"></div>
   </div>
@@ -262,6 +272,12 @@
     <div class="section-title">PINをまちがえた端末</div>
     <div id="deviceList"></div>
     <div class="note">ロック中でも子供の画面には「ちがいます」としか出ません。1度でもPINを間違えた端末を表示します（「非表示」にしても、また間違えると表示されます）。</div>
+    <div class="warn-box hidden" id="deviceWarn">
+      <b>心当たりのない失敗はありませんか？</b><br>
+      配ったばかりのころは、子供のいたずらや押しまちがいでもここに出ます。<br>
+      使い始めてしばらくたってから<b>心当たりのない失敗</b>が出たときは、アプリのURL（共有QRコード）が家族以外にもれて、だれかがPINを試している可能性があります。<br>
+      その場合は、Apps Script で<b>新しいデプロイを作ってURLを変え</b>、古いデプロイを「アーカイブ」してから、新しい共有QRコードを家族に配り直してください（手順は README の「URLがもれたかもしれないとき」）。
+    </div>
 
     <div class="section-title">メンテナンス</div>
     <button class="btn btn-sub" id="btnRepair">🛠 初期設定（シートの修復）</button>

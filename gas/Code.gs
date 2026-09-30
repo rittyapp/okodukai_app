@@ -28,7 +28,7 @@
  */
 
 // ===================== 設定値 =====================
-const SERVER_VERSION = '3.1.0';
+const SERVER_VERSION = '3.2.0';
 
 // 公開してよい情報のみ。クライアントIDはブラウザに渡る前提の値で、秘密ではない。
 const DEFAULT_OAUTH_CLIENT_ID = '337708567191-tpqbqqinfgm5bpje56ccdj2gmkphdngi.apps.googleusercontent.com';
@@ -972,6 +972,8 @@ function historyLimit_() {
   return n >= 5 && n <= 500 ? n : DEFAULT_HISTORY_LIMIT;
 }
 const byNewest_ = function (a, b) { return new Date(b.Timestamp) - new Date(a.Timestamp); };
+/** 子供の画面の「おてつだい」タブに出す記録（それ以外は「ざんだか」タブ） */
+function isChoreTab_(r) { return r.Type === 'chore' || r.Type === 'unlock_request'; }
 
 /**
  * 子供の画面（最初に出す分）：残高・お手伝いボタン・りれき（最新 HISTORY_LIMIT 件）・カレンダー用の軽い一覧。
@@ -985,6 +987,10 @@ function apiDashboard_(ctx) {
   const todayCount = rows.filter(function (r) { return isCountedChore_(r) && dayOf_(r.Timestamp) === today; }).length;
   const isToday = function (r) { return r.Type === 'unlock_request' && dayOf_(r.Timestamp) === today; };
   const visible = rows.filter(function (r) { return !isTrue_(r.Hidden); }).sort(byNewest_);
+  const limit = historyLimit_();
+  // 「おてつだい」タブ（お手伝い・上限追加のおねがい）と「ざんだか」タブ（それ以外）で、それぞれ最新N件
+  const choreRows = visible.filter(isChoreTab_).slice(0, limit);
+  const moneyRows = visible.filter(function (r) { return !isChoreTab_(r); }).slice(0, limit);
 
   return {
     child: { id: child.UserId, name: child.Name },
@@ -992,10 +998,10 @@ function apiDashboard_(ctx) {
     balance: rows.reduce(function (s, r) { return inBalance_(r) ? s + (Number(r.Amount) || 0) : s; }, 0),
     chores: listChores_(),
     // 表示件数より古いりれきは表示しない（非表示フラグは付けないので、カレンダーの日付からは見られる）
-    history: visible.slice(0, historyLimit_()).map(function (r) { return outRow_(r, me); }),
-    historyLimit: historyLimit_(),
-    // カレンダーの色付け用（日付・種類・状態だけ）
-    calendar: visible.map(function (r) { return [dayOf_(r.Timestamp), r.Type, r.Status]; }),
+    history: choreRows.concat(moneyRows).sort(byNewest_).map(function (r) { return outRow_(r, me); }),
+    historyLimit: limit,
+    // カレンダー用（日付・種類・状態・金額だけ）。お手伝い・増えた・つかったの印を日ごとに付ける
+    calendar: visible.map(function (r) { return [dayOf_(r.Timestamp), r.Type, r.Status, Number(r.Amount) || 0]; }),
     today: {
       day: today, count: todayCount, limit: DAILY_LIMIT,
       unlocked: rows.some(function (r) { return isToday(r) && r.Status === 'approved'; }),

@@ -9,5 +9,5 @@
 window.OKODUKAI_CONFIG = {
   VERSION: '3.2.0',
   DEFAULT_OAUTH_CLIENT_ID: '337708567191-tpqbqqinfgm5bpje56ccdj2gmkphdngi.apps.googleusercontent.com',
-  TEMPLATE_SPREADSHEET_ID: ''
+  TEMPLATE_SPREADSHEET_ID: '12AlV83nVed3BcPURJe2hp_7dEn7ux9BGlAIf-8ZjQRg'
 };

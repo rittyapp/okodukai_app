@@ -100,19 +100,40 @@
     props.ALLOWANCE_AMOUNT = '500';
     props.ALLOWANCE_DAY = '1';
     props.ALLOWANCE_START = lm;
-    const add = (day, hh, type, name, st, amt, by, byId) => sheets.Ledger.data.push([
-      G.Utilities.getUuid(), new Date(day + 'T' + hh + ':00+09:00'), 'uAiri', type, 'c01', name, st, amt, '',
-      by || 'あいり', st === 'approved' ? 'パパ' : '', '', '', byId || 'uAiri']);
-    add(lm + '-03', '17:00', 'chore', 'お風呂掃除', 'approved', 30);
-    add(lm + '-04', '17:00', 'chore', 'お風呂掃除', 'approved', 30);
-    add(lm + '-05', '17:00', 'chore', '食器洗い', 'approved', 30);
-    add(lm + '-05', '18:00', 'chore', 'ゴミ捨て', 'approved', 30);
-    add(lm + '-05', '19:00', 'chore', '料理', 'approved', 100);
-    add(lm + '-20', '10:00', 'adjustment', 'おこづかい', 'approved', 500, 'パパ', 'uPapa');
-    add(dayStr(2), '16:00', 'chore', 'ゴミ捨て', 'approved', 30);
-    add(dayStr(1), '16:00', 'chore', '食器洗い', 'approved', 30);
-    add(dayStr(1), '16:30', 'usage', 'おかし', 'approved', -120);
-    add(dayStr(0), '07:30', 'chore', '布団干し', 'pending', 30);
+    // 列：Id, Timestamp, ChildId, Type, ChoreId, ChoreName, Status, Amount, Memo, RequestedBy, ApprovedBy, ApprovedAt, Hidden, RequestedById, Thanks
+    const add = (child, day, hh, type, choreId, name, st, amt, thanks) => {
+      const id = G.Utilities.getUuid();
+      const kid = child === 'uAiri' ? 'あいり' : 'しょう';
+      const ts = new Date(day + 'T' + hh + ':00+09:00');
+      sheets.Ledger.data.push([id, ts, child, type, choreId, name, st, amt, '',
+        kid, st === 'approved' ? 'パパ' : '', st === 'approved' ? ts : '', '', child, thanks || '']);
+      return id;
+    };
+    const C = { c01: ['ゴミ捨て', 30], c02: ['お風呂掃除', 30], c03: ['料理', 100], c04: ['食器洗い', 30], c05: ['洗濯物たたみ', 30], c06: ['掃除機がけ', 30] };
+    const plan = ['c02', 'c04', 'c01', 'c05', 'c06', 'c04', 'c02', 'c01', 'c03', 'c05'];
+    const stamps = ['ありがとう！', 'たすかったよ！', 'さすが！', 'ピカピカだね✨', 'いつもえらいね', 'またおねがいね'];
+    const seenIds = [];
+    // あいり：先月から毎日1〜2回（ときどき休み）
+    for (let off = 1, k = 0; off <= 45; off++) {
+      if (off % 6 === 0) continue;
+      for (let j = 0; j < 1 + (off % 2); j++, k++) {
+        const c = plan[k % plan.length];
+        seenIds.push(add('uAiri', dayStr(off), (16 + j) + ':00', 'chore', c, C[c][0], 'approved', C[c][1], stamps[k % stamps.length]));
+      }
+    }
+    add('uAiri', dayStr(9), '15:00', 'usage', '', 'おかし', 'approved', -120);
+    add('uAiri', dayStr(3), '18:00', 'usage', '', 'まんが', 'approved', -300);
+    add('uAiri', dayStr(0), '07:30', 'chore', 'c02', 'お風呂掃除', 'pending', 30); // 親が承認すると落下物
+    // しょう：はじめたばかり。今日のゴミ捨ては しょう がやったので、あいりは押せない（家族で1日1回まで）
+    add('uSho', dayStr(2), '17:00', 'chore', 'c04', '食器洗い', 'approved', 30, 'ありがとう！');
+    add('uSho', dayStr(0), '17:00', 'chore', 'c01', 'ゴミ捨て', 'pending', 30);
+    // りそく：先月から月1%（先月分を「うけとる」ところから試せる）
+    props.INTEREST_YEN_RATE = '1';
+    props.INTEREST_YEN_START = lm;
+    // お試しでレアが見られるように、落ちる確率を3倍にしておく（本番は1倍：レア1/100・SR1/1000）
+    props.DROP_TEST_BOOST = '3';
+    // あいりの端末は「ここまでは見た」ことにしておく（親が承認→あいりでログイン、でおいわいが出る）
+    local.okd_seen_uAiri = JSON.stringify({ ids: seenIds });
   }
 
   window.OKD_BEFORE_BOOT = fetch('gas/Code.gs').then((r) => r.text()).then((code) => {

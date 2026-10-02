@@ -200,3 +200,118 @@ dialog h3 { margin: 0 0 8px; font-size: 17px; }
 .date-row { display: flex; gap: 8px; }
 .date-row select { flex: 1; }
 #dlgBody label { display: block; font-size: 13px; color: #666; margin-top: 8px; }
+#dlgBody label.check { display: flex; }
+
+/* ---------- 子供のタブは4つ ---------- */
+#screenChild .tabbar button { font-size: 13px; padding-left: 2px; padding-right: 2px; position: relative; white-space: nowrap; }
+
+/* ---------- お手伝い：兄弟がやって「家族で1日○回まで」に達した ---------- */
+.chore-note { display: block; font-style: normal; font-size: 11px; margin-top: 3px; color: #7a5200; }
+.chore-btn.full { background: #eee; box-shadow: none; color: #999; }
+.chore-btn.full .chore-note { color: #888; }
+.chore-btn:disabled { opacity: 1; cursor: default; }
+
+/* ---------- ありがとう ---------- */
+.thanks { background: #fff0f3; color: #a33a5a; border-radius: 10px; padding: 5px 10px; font-size: 13px; margin-top: 6px; font-weight: bold; }
+.thanks small { font-weight: normal; margin-left: 6px; color: #b77; }
+.stamp-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin: 8px 0 4px; }
+.stamp { border: 2px solid #f3c6d2; background: #fff7f9; color: #a33a5a; border-radius: 12px; padding: 8px 2px; font-size: 13px; font-weight: bold; cursor: pointer; }
+.stamp.on { background: #ff8fab; color: #fff; border-color: #ff8fab; }
+
+/* ---------- りそく ---------- */
+.interest-card { background: #f1f8ff; border: 2px solid #b9dcff; border-radius: 16px; padding: 12px 14px; margin-bottom: 14px; font-size: 14px; }
+.int-head { display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: #2f5d8a; }
+.int-head b { color: #1d6fd1; font-size: 15px; }
+.int-total { font-size: 15px; margin-top: 6px; }
+.int-total b { color: #1d6fd1; font-size: 20px; }
+.int-bar { display: flex; height: 14px; border-radius: 8px; overflow: hidden; background: #e3ecf5; margin-top: 8px; }
+.int-bar i { display: block; height: 100%; }
+.int-bar .own, .int-legend i.own, .sim-bar i.own { background: #ffc75a; }
+.int-bar .int, .int-legend i.int, .sim-bar i.int { background: #4aa3ff; }
+.int-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: #555; margin-top: 5px; }
+.int-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 4px; vertical-align: -1px; }
+.int-months { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.int-months span { background: #fff; border-radius: 10px; padding: 3px 8px; font-size: 12px; }
+.int-months b { color: #1d6fd1; margin-left: 4px; }
+.int-due { background: #fff; border-radius: 12px; padding: 10px; margin-top: 10px; }
+
+/* ---------- ちょきん計算き（1か月の式＋5年の棒グラフ） ---------- */
+.sim-card { background: var(--card); border-radius: 18px; box-shadow: 0 3px 10px rgba(0,0,0,.07); padding: 14px 16px; margin-bottom: 14px; }
+.sim-q { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; font-size: 14px; margin-bottom: 8px; }
+.seg { display: inline-flex; background: #f3efe8; border-radius: 10px; padding: 3px; gap: 2px; flex-wrap: wrap; }
+.seg button { border: none; background: transparent; border-radius: 8px; padding: 6px 10px; font-size: 14px; cursor: pointer; }
+.seg button.on { background: var(--accent); font-weight: bold; }
+.sim-lines { border-top: 1px dashed var(--line); padding-top: 8px; font-size: 14px; line-height: 1.9; }
+.sim-lines small { color: var(--sub); margin-left: 4px; }
+.sim-total { font-size: 16px; }
+.sim-total b { color: var(--orange); font-size: 20px; }
+.sim-5y-title { font-size: 13px; color: #555; margin: 12px 0 6px; border-top: 1px dashed var(--line); padding-top: 10px; }
+.sim-chart { display: flex; align-items: flex-end; gap: 10px; padding: 0 4px; }
+.sim-col { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; min-width: 0; }
+.sim-val { font-size: 10px; color: #555; white-space: nowrap; margin-bottom: 2px; }
+.sim-bar { width: 70%; max-width: 40px; display: flex; flex-direction: column; border-radius: 6px 6px 0 0; overflow: hidden; }
+.sim-bar i { display: block; width: 100%; }
+.sim-year { font-size: 11px; color: var(--sub); margin-top: 3px; }
+.sim-5y { font-size: 15px; margin-top: 8px; }
+.sim-5y b { color: var(--orange); font-size: 18px; }
+.sim-5y .int-c { color: #1d6fd1; font-size: 15px; }
+
+/* ---------- おいわい・落下物 ---------- */
+.celebrate { position: fixed; inset: 0; background: rgba(0,0,0,.4); z-index: 45; display: flex; align-items: center; justify-content: center; padding: 16px; }
+.celebrate-card { background: #fff; border-radius: 24px; padding: 22px 20px 16px; width: min(100%, 360px); text-align: center; animation: pop .35s ease-out; max-height: 90dvh; overflow-y: auto; }
+.celebrate-big { font-size: 64px; line-height: 1.1; animation: bounce 1s ease-in-out infinite alternate; }
+.celebrate-title { font-size: 22px; font-weight: bold; margin: 6px 0 10px; }
+.cel-list > div { background: #f7fbf8; border-radius: 12px; padding: 8px 10px; margin-bottom: 6px; text-align: left; font-size: 15px; }
+.confetti-box { position: fixed; inset: 0; pointer-events: none; z-index: 60; overflow: hidden; }
+.confetti-box i { position: absolute; top: -12px; width: 8px; height: 14px; border-radius: 2px; animation: fall linear forwards; }
+@keyframes fall { to { transform: translateY(105vh) rotate(720deg); } }
+@keyframes pop { from { transform: scale(.7); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+@keyframes bounce { from { transform: translateY(0); } to { transform: translateY(-8px); } }
+.confetti-box b { position: absolute; top: -48px; font-size: 34px; line-height: 1; animation: fall-rare linear forwards; z-index: 3; }
+.confetti-box b span { display: inline-block; }
+.confetti-box b.drop-rare span { filter: drop-shadow(0 0 6px #fff7a8) drop-shadow(0 0 10px #ffd35c); }
+.confetti-box b.drop-sr { font-size: 46px; }
+.confetti-box b.drop-sr span { filter: drop-shadow(0 0 8px #fff) drop-shadow(0 0 16px #c38cff) drop-shadow(0 0 24px #5b8def); }
+@keyframes fall-rare { 0% { transform: translateY(0) rotate(-10deg); } 50% { transform: translateY(55vh) rotate(10deg); } 100% { transform: translateY(108vh) rotate(-10deg); } }
+/* レアの演出：一時停止 → 暗転 → レアだけ大きくなって点滅 */
+.confetti-box.paused > i, .confetti-box.paused > b { animation-play-state: paused; }
+.confetti-box.spot > b span { animation: rare-flash .36s ease-in-out 6 alternate; }
+.confetti-box.spot > b.drop-sr span { animation: sr-flash .3s ease-in-out 10 alternate; }
+@keyframes rare-flash { from { transform: scale(1.4); filter: brightness(1) drop-shadow(0 0 8px #ffd35c); } to { transform: scale(2.1); filter: brightness(1.8) drop-shadow(0 0 22px #fff3a0) drop-shadow(0 0 34px #ffd35c); } }
+@keyframes sr-flash { from { transform: scale(1.6) rotate(-8deg); filter: brightness(1) drop-shadow(0 0 14px #c38cff); } to { transform: scale(2.4) rotate(8deg); filter: brightness(2) hue-rotate(60deg) drop-shadow(0 0 30px #fff) drop-shadow(0 0 44px #5b8def); } }
+.rare-dark { position: absolute; inset: 0; background: rgba(10, 8, 30, .82); z-index: 2; pointer-events: auto; animation: dark-in .25s ease-out; }
+@keyframes dark-in { from { opacity: 0; } to { opacity: 1; } }
+.rare-banner { position: absolute; left: 0; right: 0; top: 58%; text-align: center; z-index: 4; color: #fff3a0; font-size: 26px; font-weight: bold;
+  text-shadow: 0 0 10px #ffb43d, 0 0 20px #ffb43d; animation: pop .35s ease-out; pointer-events: none; }
+.rare-banner.sr { color: #fff; font-size: 30px; text-shadow: 0 0 10px #c38cff, 0 0 22px #5b8def, 0 0 34px #ff8fab; }
+.rare-banner small { display: block; font-size: 18px; }
+.cel-rares { margin-bottom: 8px; }
+.cel-rare { display: block; width: 100%; border: 2px solid #ffd35c; background: #fffbe6; border-radius: 12px; padding: 8px 10px; margin-bottom: 6px; font-size: 15px; text-align: left; cursor: pointer; }
+.cel-rare.t4 { border-color: #c38cff; background: linear-gradient(90deg, #fff0f6, #eef4ff, #f3ecff); }
+.cel-rare .new { background: #ff5a7a; color: #fff; font-size: 11px; font-weight: bold; border-radius: 8px; padding: 1px 6px; margin-left: 6px; }
+.cel-rare .conf { background: #7b5bd6; color: #fff; font-size: 11px; font-weight: bold; border-radius: 8px; padding: 1px 6px; margin-left: 6px; }
+@media (prefers-reduced-motion: reduce) { .celebrate-card, .celebrate-big { animation: none; } }
+
+/* ---------- レアずかん ---------- */
+.rare-count { font-size: 13px; color: #7b5bd6; margin-left: 6px; }
+.rare-grid { display: grid; grid-template-columns: repeat(10, 1fr); gap: 3px; background: #fff; border-radius: 14px; padding: 6px; box-shadow: 0 2px 6px rgba(0,0,0,.05); }
+.rare-cell { position: relative; aspect-ratio: 1 / 1; border: none; border-radius: 6px; background: #f1ede6; color: #c9c2b6; font-size: clamp(12px, 4.2vw, 22px); font-weight: bold; padding: 0; cursor: pointer; line-height: 1; }
+.rare-cell.got { background: #fff8e0; color: inherit; }
+.rare-cell.t2.got { background: #eaf4ff; }
+.rare-cell.t3.got { background: #f3eaff; }
+.rare-cell.t4 { box-shadow: 0 0 0 2px #e3d3ff inset; }
+.rare-cell.t4.got { background: linear-gradient(135deg, #ffe0ec, #fff6c8, #dff0ff, #eadcff); box-shadow: 0 0 0 2px #c38cff inset; }
+.rare-cell small { position: absolute; right: 1px; bottom: 0; font-size: 9px; color: var(--orange); }
+/* 兄弟だけが持っている：まっ黒なシルエット（形だけわかる） */
+.rare-cell.shadow { background: #e9e4f5; }
+.rare-cell.shadow span, .rare-shadow { filter: brightness(0); opacity: .55; }
+.rare-detail { text-align: center; }
+.rare-big { font-size: 72px; line-height: 1.2; }
+.rare-lv { font-size: 13px; color: var(--orange); font-weight: bold; }
+.rare-detail.t4 .rare-lv { color: #8a4fd6; }
+.rare-trivia { text-align: left; background: #f7fbf8; border-radius: 12px; padding: 10px 12px; font-size: 15px; line-height: 1.7; }
+.confirm-box { background: #fff; border: 2px dashed #b9a8ef; border-radius: 14px; padding: 10px 12px; margin-bottom: 8px; }
+.confirm-head { font-weight: bold; color: #7b5bd6; }
+.confirm-head small { font-weight: normal; color: var(--sub); margin-left: 6px; }
+.confirm-msg { font-size: 13px; line-height: 1.6; margin-top: 4px; }
+.confirm-msg.on { background: #f1ecff; border-radius: 10px; padding: 6px 8px; }

@@ -330,6 +330,7 @@ function bindStatic() {
   $('btnPinBack').onclick = () => openChild(ME.userId, false);
   $('calPrev').onclick = () => { CHILD.calMonth = addMonth(CHILD.calMonth, -1); CHILD.calSel = null; renderCalendar(); };
   $('calNext').onclick = () => { CHILD.calMonth = addMonth(CHILD.calMonth, 1); CHILD.calSel = null; renderCalendar(); };
+  $('btnCelebrateOk').onclick = () => $('celebrate').classList.add('hidden');
 
   // 親画面
   document.querySelectorAll('#screenParent .tabbar button').forEach((b) => { b.onclick = () => parentTab(b.dataset.tab); });
@@ -650,15 +651,17 @@ async function refreshChild() {
   }
 }
 
-/** 子供の画面のタブ：ざんだか／おてつだい／カレンダー。最後に開いたタブを端末に覚えておく */
+/** 子供の画面のタブ：ざんだか／おてつだい／カレンダー／ずかん。最後に開いたタブを端末に覚えておく */
 function childTab(tab) {
-  if (['money', 'chore', 'cal'].indexOf(tab) < 0) tab = 'money';
+  if (['money', 'chore', 'cal', 'zukan'].indexOf(tab) < 0) tab = 'money';
   lsSet('okd_child_tab', tab);
   document.querySelectorAll('#screenChild .tabbar button').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
   $('childPaneMoney').classList.toggle('hidden', tab !== 'money');
   $('childPaneChore').classList.toggle('hidden', tab !== 'chore');
   $('childPaneCal').classList.toggle('hidden', tab !== 'cal');
+  $('childPaneZukan').classList.toggle('hidden', tab !== 'zukan');
   if (tab === 'cal' && CHILD && CHILD.data) renderCalendar();
+  if (tab === 'zukan') { $('zukanDot').classList.add('hidden'); if (CHILD && CHILD.data) renderRares(); }
 }
 
 /** 「おてつだい」タブに出す記録（それ以外は「ざんだか」タブ） */
@@ -678,8 +681,11 @@ function renderChild() {
 
   renderChores();
   renderHistory();
+  renderSim();
   if (CHILD.extras) renderExtras();
   if (!$('childPaneCal').classList.contains('hidden')) renderCalendar();
+  if (!$('childPaneZukan').classList.contains('hidden')) renderRares();
+  checkCelebrations();
 }
 
 /** ボーナス発生中・月初ボーナスの確認・おこづかい発生中（あとから届く分） */
@@ -706,8 +712,13 @@ function renderExtras() {
     $('btnAllowance').textContent = al.length > 1 ? 'おこづかいをうけとる（あと' + al.length + '回）' : 'おこづかいをうけとる';
   }
 
-  // 受け取れるおこづかい・ボーナスがあるときは「ざんだか」タブに●を付ける（おてつだいタブにいても気づけるように）
-  $('moneyDot').classList.toggle('hidden', !(al.length || ready.length));
+  // りそく（親が設定したときだけ）。ちょきん計算きもりそくの%を使うので描き直す
+  renderInterest();
+  renderSim();
+  const intDue = !!(x.interest && x.interest.due.length);
+
+  // 受け取れるおこづかい・ボーナス・りそくがあるときは「ざんだか」タブに●を付ける（おてつだいタブにいても気づけるように）
+  $('moneyDot').classList.toggle('hidden', !(al.length || ready.length || intDue));
 
   const banners = [];
   if (x.bonus.streakActive) banners.push('🔥 ボーナス発生中！ ' + Math.max(x.bonus.streakDays, 3) + '日連続（今日のお手伝いは1回につき+10円、来月1日にまとめてもらえるよ）');
@@ -731,10 +742,20 @@ function renderChores() {
   const grid = $('choreGrid');
   grid.classList.toggle('editing', !!CHILD.editing);
   $('btnChoreEdit').textContent = CHILD.editing ? '✔ 編集をおわる' : '✏ お手伝い編集';
-  grid.innerHTML = d.chores.map((c, i) =>
-    '<button type="button" class="chore-btn" data-i="' + i + '">' + esc(c.name) + '<small>' + yen(c.amount) + '</small>' +
-    (CHILD.editing ? '<span class="chore-tools"><span>✏</span></span>' : '') + '</button>'
-  ).join('') + (CHILD.editing ? '<button type="button" class="chore-btn add" data-add="1">＋ 追加</button>' : '');
+  // 家族で1日○回まで：兄弟がやって上限になったものは、子供は押せない（親は代わりに記録できる）
+  const state = (c) => {
+    const fam = (d.choreToday || {})[c.id];
+    if (c.dailyMax && fam && fam.count >= c.dailyMax) {
+      return { full: true, note: 'きょうは ' + fam.by.map((n) => (n === d.child.name ? 'じぶん' : n)).join('・') + ' がやったよ' };
+    }
+    return { full: false, note: c.dailyMax && fam ? '家族であと' + (c.dailyMax - fam.count) + '回' : '' };
+  };
+  grid.innerHTML = d.chores.map((c, i) => {
+    const s = CHILD.editing ? { full: false, note: '' } : state(c);
+    return '<button type="button" class="chore-btn' + (s.full ? ' full' : '') + '" data-i="' + i + '"' + (s.full && !CHILD.asParent ? ' disabled' : '') + '>' +
+      esc(c.name) + '<small>' + yen(c.amount) + '</small>' + (s.note ? '<em class="chore-note">' + esc(s.note) + '</em>' : '') +
+      (CHILD.editing ? '<span class="chore-tools"><span>✏</span></span>' : '') + '</button>';
+  }).join('') + (CHILD.editing ? '<button type="button" class="chore-btn add" data-add="1">＋ 追加</button>' : '');
   grid.querySelectorAll('.chore-btn').forEach((b) => {
     if (b.dataset.add) { b.onclick = () => editChore(null); return; }
     const c = d.chores[Number(b.dataset.i)];
@@ -767,6 +788,7 @@ async function pressChore(c, btn) {
   if (CHILD.asParent) d.balance += c.amount;
   t.count++;
   renderChild();
+  if (!CHILD.asParent) confetti(24); // 押したらすぐ小さくおいわい（承認されたら落下物）
   try {
     const r = await api('pressChore', { choreId: c.id, childId: CHILD.id }, rid);
     toast(r.message);
@@ -780,6 +802,8 @@ async function editChore(c) {
   const ok = await dialog(c ? 'お手伝いを編集' : 'お手伝いを追加',
     '<label>名前</label><input id="fChoreName" maxlength="20" value="' + esc(c ? c.name : '') + '">' +
     '<label>金額（円）</label><input id="fChoreAmount" type="number" inputmode="numeric" min="0" value="' + (c ? c.amount : 30) + '">' +
+    '<label>家族（兄弟みんな）で1日に何回まで（0＝上限なし）</label>' +
+    '<input id="fChoreMax" type="number" inputmode="numeric" min="0" max="20" value="' + (c ? c.dailyMax : 1) + '">' +
     (c ? '<label class="check"><input type="checkbox" id="fChoreDelete"> このお手伝いを削除する</label>' : ''),
     '保存');
   if (!ok) return;
@@ -788,7 +812,7 @@ async function editChore(c) {
       await api('deleteChore', { choreId: c.id });
       toast('削除しました');
     } else {
-      await api('saveChore', { choreId: c ? c.id : '', name: $('fChoreName').value, amount: $('fChoreAmount').value });
+      await api('saveChore', { choreId: c ? c.id : '', name: $('fChoreName').value, amount: $('fChoreAmount').value, dailyMax: $('fChoreMax').value });
       toast('保存しました');
     }
     refreshChild();
@@ -876,6 +900,7 @@ function itemHtml(r) {
     '<div class="r1"><span>' + (r.childName ? esc(r.childName) + '：' : '') + esc(r.name) + '</span>' +
     '<span class="' + (r.amount < 0 ? 'minus' : 'plus') + '">' + signedYen(r.amount) + '</span></div>' +
     '<div class="r2">' + fmtDateTime(r.ts) + ' ' + statusTag(r.status) + who + (r.memo ? ' ・ ' + esc(r.memo) : '') + '</div>' +
+    (r.thanks && r.status === 'approved' ? '<div class="thanks">💌 ' + esc(r.thanks) + (r.approvedBy ? '<small>― ' + esc(r.approvedBy) + '</small>' : '') + '</div>' : '') +
     (acts.length ? '<div class="acts">' + acts.join('') + '</div>' : '') + '</div>';
 }
 
@@ -895,10 +920,17 @@ async function itemAction(act, r, btn, after) {
   if (isCooling(key)) return;
   if (act === 'edit') return editEntry(r, after);
   if (act === 'cancel' && !(await dialog('取り消しますか？', '<p>' + esc(r.name) + '（' + signedYen(r.amount) + '）を取り消します。</p>', '取り消す'))) return;
+  const args = { id: r.id };
+  // お手伝いを承認するときは「ありがとう」を一緒に送る（えらばなければサーバーがランダムでえらぶ）
+  if (act === 'approve' && r.type === 'chore') {
+    const thanks = await askThanks(r);
+    if (thanks === null) return;
+    args.thanks = thanks;
+  }
   cool(key, btn);
   const map = { approve: 'approve', reject: 'reject', cancel: 'cancelEntry', hide: 'hideEntry' };
   try {
-    const res = await api(map[act], { id: r.id }, uuid());
+    const res = await api(map[act], args, uuid());
     toast(res.message);
   } catch (e) { fail(e); }
   after();
@@ -1029,6 +1061,355 @@ async function renderCalDetail() {
   bindItemActions(el, rows, refreshChild);
 }
 
+// ===================== ありがとう・りそく・ちょきん計算き =====================
+
+// 承認のときの「ありがとう」（サーバーの THANKS_DEFAULTS と同じ。えらばなければサーバーがランダムでえらぶ）
+const THANKS_STAMPS = ['ありがとう！', 'たすかったよ！', 'さすが！', 'ピカピカだね✨', 'いつもえらいね', 'またおねがいね'];
+const CHORE_EMOJI = [[/ゴミ/, '🗑️'], [/風呂/, '🛁'], [/料理/, '🍳'], [/食器|皿/, '🍽️'], [/洗濯/, '👕'], [/掃除機/, '🧹'],
+  [/布団/, '🛏️'], [/玄関|靴/, '👟'], [/ペット|犬|猫/, '🐶'], [/草|庭|花/, '🌱'], [/そうじ|掃除/, '🧽']];
+function choreEmoji(name) {
+  const hit = CHORE_EMOJI.filter((x) => x[0].test(name))[0];
+  return hit ? hit[1] : '⭐';
+}
+
+/** 親が承認するときの「ありがとう」。null＝やめる、''＝えらばない（サーバーがランダムで送る） */
+async function askThanks(r) {
+  const p = dialog('承認する',
+    '<p><b>' + esc((r.childName ? r.childName + '：' : '') + r.name) + '</b>（' + signedYen(r.amount) + '）</p>' +
+    '<div class="note">「ありがとう」をいっしょに送れます（えらばないと、どれかがランダムでとどきます）</div>' +
+    '<div class="stamp-grid">' + THANKS_STAMPS.map((s) => '<button type="button" class="stamp" data-s="' + esc(s) + '">' + esc(s) + '</button>').join('') + '</div>' +
+    '<input id="fThanks" maxlength="40" placeholder="ひとこと（じゆうに書けます）">',
+    '承認する');
+  $('dlgBody').querySelectorAll('.stamp').forEach((b) => {
+    b.onclick = () => {
+      const on = !b.classList.contains('on');
+      $('dlgBody').querySelectorAll('.stamp').forEach((x) => x.classList.remove('on'));
+      b.classList.toggle('on', on);
+      $('fThanks').value = on ? b.dataset.s : '';
+    };
+  });
+  if (!(await p)) return null;
+  return $('fThanks').value.trim();
+}
+
+/** りそくカード：率・りそくでふえた合計・「じぶんでためた分」と「りそく」の割合・月ごと・今月末このままなら・受け取り */
+function renderInterest() {
+  const el = $('interestYen');
+  const x = CHILD.extras && CHILD.extras.interest;
+  if (!x || (!x.on && !x.total)) { el.classList.add('hidden'); return; }
+  const bal = CHILD.data.balance;
+  const dueSum = x.due.reduce((t, m) => t + m.amount, 0);
+  const own = Math.max(bal - x.total, 0);
+  const pct = bal > 0 ? Math.min(100, Math.round(x.total / bal * 100)) : 0;
+  el.innerHTML = '<div class="int-head"><span>💹 りそく</span><b>' + (x.on ? '毎月 ' + x.rate + '% ふえる' : 'いまはお休み') + '</b></div>' +
+    '<div class="int-total">りそくで ふえた合計 <b>+' + yen(x.total) + '</b></div>' +
+    '<div class="int-bar"><i class="own" style="width:' + (100 - pct) + '%"></i><i class="int" style="width:' + pct + '%"></i></div>' +
+    '<div class="int-legend"><span><i class="own"></i>じぶんでためた ' + yen(own) + '</span><span><i class="int"></i>りそく ' + yen(x.total) + '</span></div>' +
+    (x.months.length ? '<div class="int-months">' + x.months.slice(0, 6).map((m) =>
+      '<span>' + esc(m.label.replace('のりそく', '')) + '<b>+' + yen(m.amount) + '</b></span>').join('') + '</div>' : '') +
+    (x.on ? '<div class="note">つかわなければ、今月末に <b>+' + yen(x.estimate) + '</b> ふえるよ（' + yen(bal + dueSum) + ' × ' + x.rate +
+      '%）。ふえた分にも、またりそくがつくよ。</div>' : '') +
+    (dueSum ? '<div class="int-due"><b>りそくがついたよ！</b><br>' + x.due.map((m) => esc(m.label) + ' +' + yen(m.amount)).join('、') +
+      '<button class="btn btn-main" data-recv="1">うけとる（+' + yen(dueSum) + '）</button></div>' : '');
+  el.classList.remove('hidden');
+  const b = el.querySelector('[data-recv]');
+  if (b) { b.onclick = () => receiveInterest(b); applyCool('interest', b); }
+}
+
+async function receiveInterest(btn) {
+  if (isCooling('interest')) return;
+  cool('interest', btn, 5000);
+  try {
+    toast((await api('receiveInterest', { childId: CHILD.id }, uuid())).message);
+    if (!CHILD.asParent) confetti(60);
+  } catch (e) { fail(e); }
+  refreshChild();
+}
+
+/** いちばん多いお手伝いの金額 */
+function commonAmount(chores) {
+  const cnt = {};
+  chores.forEach((c) => { if (c.amount > 0) cnt[c.amount] = (cnt[c.amount] || 0) + 1; });
+  const best = Object.keys(cnt).sort((a, b) => cnt[b] - cnt[a])[0];
+  return best ? Number(best) : 30;
+}
+
+/**
+ * ちょきん計算き。1か月ぶんを式で見せ（ボーナスこみ）、いまの残高から毎月ためて使わなかったときの5年分を棒グラフにする。
+ * りそくは親の設定の%（月末の残高に付く・ふくり）。設定がなければりそくなし
+ */
+function renderSim() {
+  const d = CHILD.data;
+  if (!d) return;
+  const r = d.bonusRules || {};
+  const amounts = Array.from(new Set(d.chores.map((c) => c.amount).filter((a) => a > 0))).sort((a, b) => a - b);
+  if (!CHILD.sim) CHILD.sim = { per: 3, amt: commonAmount(d.chores) };
+  const sim = CHILD.sim;
+  if (amounts.length && amounts.indexOf(sim.amt) < 0) sim.amt = commonAmount(d.chores);
+  const DAYS = 30;
+  const base = sim.amt * sim.per * DAYS;
+  const sameN = r.sameDay && sim.per >= r.sameDayFrom ? sim.per - r.sameDayFrom + 1 : 0;
+  const same = r.sameDayAmount * sameN * DAYS;
+  const stDays = r.streak ? Math.max(DAYS - (r.streakDays - 1), 0) : 0;
+  const streak = r.streakAmount * sim.per * stDays;
+  const month = base + same + streak;
+  // 5年：いまの残高から、毎月 month をためて、月末にりそく（サーバーと同じく切り捨て）
+  const it = CHILD.extras && CHILD.extras.interest;
+  const rate = it && it.on ? it.rate : 0;
+  const start = Math.max(d.balance, 0);
+  let bal = start;
+  let own = start;
+  const years = [];
+  for (let m = 1; m <= 60; m++) {
+    bal += month;
+    own += month;
+    if (rate) bal += Math.floor(bal * rate / 100);
+    if (m % 12 === 0) years.push({ y: m / 12, total: bal, own, int: bal - own });
+  }
+  const max = years[4].total || 1;
+  const seg = (name, opts, cur) => '<div class="seg" data-k="' + name + '">' +
+    opts.map((o) => '<button type="button" data-v="' + o[0] + '" class="' + (o[0] === cur ? 'on' : '') + '">' + o[1] + '</button>').join('') + '</div>';
+  const man = (n) => (n >= 10000 ? (Math.round(n / 1000) / 10) + '万' : n.toLocaleString()) + '円';
+  $('simCard').innerHTML =
+    '<div class="sim-q">1回 ' + seg('amt', amounts.map((a) => [a, a + '円']), sim.amt) + '</div>' +
+    '<div class="sim-q">1日 ' + seg('per', [[1, '1回'], [2, '2回'], [3, '3回']], sim.per) + '</div>' +
+    '<div class="sim-lines">' +
+    '<div>' + sim.amt + '円 × ' + sim.per + '回 × ' + DAYS + '日 ＝ <b>' + yen(base) + '</b></div>' +
+    (same ? '<div>' + r.sameDayFrom + '回目ボーナス ' + r.sameDayAmount + '円 × ' + sameN + '回 × ' + DAYS + '日 ＝ <b>' + yen(same) + '</b></div>' : '') +
+    (streak ? '<div>' + r.streakDays + '日連続ボーナス ' + r.streakAmount + '円 × ' + sim.per + '回 × ' + stDays + '日 ＝ <b>' + yen(streak) + '</b>' +
+      '<small>（' + r.streakDays + '日目から）</small></div>' : '') +
+    '<div class="sim-total">1か月で <b>' + yen(month) + '</b></div></div>' +
+    '<div class="sim-5y-title">いまの残高 ' + yen(start) + ' から、毎月 ' + yen(month) + ' ためて つかわなかったら…</div>' +
+    '<div class="sim-chart">' + years.map((y) =>
+      '<div class="sim-col"><div class="sim-val">' + man(y.total) + '</div>' +
+      '<div class="sim-bar" style="height:' + Math.max(3, Math.round(y.total / max * 90)) + 'px">' +
+      '<i class="int" style="height:' + (y.total ? y.int / y.total * 100 : 0) + '%"></i><i class="own" style="flex:1"></i></div>' +
+      '<div class="sim-year">' + y.y + '年</div></div>').join('') + '</div>' +
+    '<div class="int-legend"><span><i class="own"></i>じぶんでためた</span>' + (rate ? '<span><i class="int"></i>りそく（毎月' + rate + '%）</span>' : '') + '</div>' +
+    '<div class="sim-5y">5年後 <b>' + yen(years[4].total) + '</b>' +
+    (rate ? '（そのうち りそく <b class="int-c">' + yen(years[4].int) + '</b>）'
+      : '<div class="note">りそくは いまはついていないよ（親が設定すると、ためたお金がもっとふえるよ）</div>') + '</div>';
+  $('simCard').querySelectorAll('.seg button').forEach((b) => {
+    b.onclick = () => { sim[b.parentNode.dataset.k] = Number(b.dataset.v); renderSim(); };
+  });
+}
+
+// ===================== レアずかん（落下物・確定開き・兄弟のシルエット） =====================
+
+const RARES = window.OKD_RARES || [];
+function rareTier(i) { return i < 45 ? 1 : i < 75 ? 2 : i < 90 ? 3 : 4; }
+function rareLabel(i) { const t = rareTier(i); return t === 4 ? 'SR' : 'レア ' + '★'.repeat(t) + '☆'.repeat(3 - t); }
+function rareName(i) { return (rareTier(i) === 4 ? 'SR ' : 'レア ') + (RARES[i] ? RARES[i][1] : '？'); }
+
+/** ずかんタブの 10×10 マス。見つけていないものは「？」、兄弟だけが持っているものはシルエット */
+function renderRares() {
+  const d = CHILD.data;
+  const col = d.collection || {};
+  const sib = d.siblingFound || {};
+  const got = Object.keys(col).length;
+  const gotSr = Object.keys(col).filter((i) => Number(i) >= 90).length;
+  const shadows = Object.keys(sib).filter((i) => !col[i]).length;
+  $('rareCount').textContent = got + ' / 100（SR ' + gotSr + ' / 10）' + (shadows ? '　きょうだいだけ ' + shadows : '');
+  let html = '';
+  for (let i = 0; i < 100; i++) {
+    const n = col[i] || 0;
+    const shadow = !n && sib[i];
+    html += '<button type="button" class="rare-cell t' + rareTier(i) + (n ? ' got' : shadow ? ' shadow' : '') + '" data-r="' + i + '">' +
+      (n ? RARES[i][0] + (n > 1 ? '<small>' + n + '</small>' : '') : shadow ? '<span>' + RARES[i][0] + '</span>' : '？') + '</button>';
+  }
+  $('rareGrid').innerHTML = html;
+  $('rareGrid').querySelectorAll('.rare-cell').forEach((b) => { b.onclick = () => showRare(Number(b.dataset.r)); });
+  const r = d.dropRates || { perApproval: 5, sr: 100, rare: 1000 };
+  $('rareNote').textContent = 'お手伝いが承認されたり、ボーナス・おこづかいをうけとったりするたびに、' + r.perApproval + 'こ落ちてくるよ。' +
+    'レアは' + Math.round(100000 / r.rare) + 'こに1こ、SRは' + Math.round(100000 / r.sr) + 'こに1こ。マスをおすと、うんちくが読めるよ。';
+
+  // 確定開き（月に1回。つぎに承認されたとき、まだ持っていないレアが1こ落ちてくる。SRは対象外）
+  const cf = d.confirm || {};
+  $('confirmBox').innerHTML = '<div class="confirm-head">🔓 確定開き <small>月に1回</small></div>' +
+    (cf.armed ? '<div class="confirm-msg on">じゅんびOK！つぎに承認されたとき、<b>まだ持っていないレア</b>がかならず落ちてくるよ。なにが出るかはおたのしみ！</div>'
+      : cf.allRares ? '<div class="confirm-msg">レアはぜんぶそろったよ！SRはじぶんの運でさがそう。</div>'
+      : cf.usedThisMonth ? '<div class="confirm-msg">今月はもう使ったよ。来月1日にまた使えるよ。</div>'
+      : '<div class="confirm-msg">つぎに承認されたとき、まだ持っていないレアが1こかならず落ちてくるよ（SRは出ないよ）。</div>' +
+        '<button class="btn btn-main" id="btnUseConfirm">確定開きを使う</button>');
+  if ($('btnUseConfirm')) { $('btnUseConfirm').onclick = useConfirm; applyCool('confirm', $('btnUseConfirm')); }
+}
+
+async function useConfirm() {
+  if (isCooling('confirm')) return;
+  const ok = await dialog('確定開きを使う？',
+    '<p style="text-align:center;font-size:40px;margin:4px 0">🔓</p>' +
+    '<p>つぎに承認されたとき、<b>まだ持っていないレア</b>が1こ、かならず落ちてくるよ。</p>' +
+    '<div class="note">使えるのは月に1回。なにが出るかは、落ちてくるまでひみつ。SRは出ないよ。</div>', '使う');
+  if (!ok) return;
+  cool('confirm', $('btnUseConfirm'), 5000);
+  try { toast((await api('useConfirm', { childId: CHILD.id }, uuid())).message); } catch (e) { fail(e); }
+  refreshChild();
+}
+
+/** マスをおしたとき。持っていない→？、兄弟だけ→シルエットとだれが持っているか（名前とうんちくはひみつ） */
+function showRare(i) {
+  const n = (CHILD.data.collection || {})[i] || 0;
+  const sib = (CHILD.data.siblingFound || {})[i];
+  if (!n && sib) {
+    return dialog('？？？', '<div class="rare-detail t' + rareTier(i) + '"><div class="rare-big rare-shadow">' + RARES[i][0] + '</div>' +
+      '<div class="rare-lv">' + rareLabel(i) + '</div>' +
+      '<p class="rare-trivia"><b>' + esc(sib.join('・')) + '</b> が見つけているよ！<br>きみはまだ持っていないよ。見つけると、名前とうんちくが読めるようになるよ。</p></div>',
+      'とじる', true);
+  }
+  if (!n) {
+    return dialog('？？？', '<p style="text-align:center;font-size:48px;margin:6px 0">？</p><p style="text-align:center">' + rareLabel(i) +
+      '<br>まだ見つけていないよ。お手伝いが承認されると、たまに落ちてくるよ。</p>', 'とじる', true);
+  }
+  const r = RARES[i];
+  return dialog(rareName(i), '<div class="rare-detail t' + rareTier(i) + '"><div class="rare-big">' + r[0] + '</div>' +
+    '<div class="rare-lv">' + rareLabel(i) + '　もっている数 ×' + n + '</div>' +
+    '<p class="rare-trivia">' + esc(r[2]) + '</p></div>', 'とじる', true);
+}
+
+/** おいわい画面の上でうんちくを見る（とじたら、おいわいにもどる） */
+function showRareOver(i) {
+  $('celebrate').classList.add('hidden');
+  showRare(i).then(() => $('celebrate').classList.remove('hidden'));
+}
+
+/**
+ * 承認されたぶんの落下物。はずれは色つきの四角、レア・SRは絵文字（SRはキラキラ）。
+ * レアがあるときは、落ちている途中で全体を一時停止 → 暗転 → レアだけ点滅 → 再開（画面をタップで飛ばせる）。
+ * 演出がおわったら resolve する（そのあとでおいわいカードを出す）
+ */
+function dropRain(normal, rares) {
+  const reduce = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (reduce) return Promise.resolve();
+  const box = document.createElement('div');
+  box.className = 'confetti-box';
+  const colors = ['#ffd35c', '#6fb98f', '#ff8a8a', '#5b8def', '#ffb43d', '#c38cff'];
+  for (let i = 0; i < Math.min(normal, 150); i++) {
+    const p = document.createElement('i');
+    p.style.left = (4 + Math.random() * 88) + '%';
+    p.style.background = colors[i % colors.length];
+    p.style.animationDelay = Math.random() * 0.6 + 's';
+    p.style.animationDuration = 1.6 + Math.random() * 1.2 + 's';
+    box.appendChild(p);
+  }
+  // レアは横にならべて同時に落とす（止まったとき、重ならないように）
+  rares.forEach((r, k) => {
+    const p = document.createElement('b');
+    p.className = rareTier(r) === 4 ? 'drop-sr' : 'drop-rare';
+    p.style.left = (rares.length === 1 ? 44 : 12 + (76 / (rares.length - 1)) * k) + '%';
+    p.style.animationDuration = '3s';
+    p.innerHTML = '<span>' + (RARES[r] ? RARES[r][0] : '⭐') + '</span>';
+    box.appendChild(p);
+  });
+  document.body.appendChild(box);
+  if (!rares.length) {
+    setTimeout(() => box.remove(), 3500);
+    return Promise.resolve();
+  }
+  const sr = rares.some((r) => rareTier(r) === 4);
+  return new Promise((resolve) => {
+    let ended = false;
+    let timer = null;
+    const dark = document.createElement('div');
+    dark.className = 'rare-dark';
+    const banner = document.createElement('div');
+    banner.className = 'rare-banner' + (sr ? ' sr' : '');
+    banner.innerHTML = (sr ? '🌈 SR が出た！！ 🌈' : '✨ レアが出た！ ✨') +
+      (rares.length > 1 ? '<small>レア・SR ×' + rares.length + '</small>' : '');
+    const finish = () => {
+      if (ended) return;
+      ended = true;
+      clearTimeout(timer);
+      box.classList.remove('paused', 'spot');
+      dark.remove();
+      banner.remove();
+      setTimeout(() => { box.remove(); resolve(); }, 1400);
+    };
+    // 落ちはじめて約1秒（レアが画面の上のほうに来たころ）で一時停止して暗転・点滅
+    timer = setTimeout(() => {
+      box.classList.add('paused', 'spot');
+      box.appendChild(dark);
+      box.appendChild(banner);
+      dark.onclick = finish; // タップで飛ばせる
+      timer = setTimeout(finish, sr ? 3000 : 2200);
+    }, 1000);
+  });
+}
+
+/** 紙ふぶき（動きをへらす設定の端末では出さない） */
+function confetti(n) {
+  if (window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const box = document.createElement('div');
+  box.className = 'confetti-box';
+  const colors = ['#ffd35c', '#6fb98f', '#ff8a8a', '#5b8def', '#ffb43d', '#c38cff'];
+  for (let i = 0; i < n; i++) {
+    const p = document.createElement('i');
+    p.style.left = Math.random() * 100 + '%';
+    p.style.background = colors[i % colors.length];
+    p.style.animationDelay = Math.random() * 0.4 + 's';
+    p.style.animationDuration = 1.6 + Math.random() * 1.2 + 's';
+    box.appendChild(p);
+  }
+  document.body.appendChild(box);
+  setTimeout(() => box.remove(), 3500);
+}
+
+/**
+ * おいわい：前に見たときから承認されたお手伝い・うけとったボーナス・おこづかいがあれば、
+ * 1件につき5この落下物（レアは演出つき）のあとで、ありがとう・出たレアをカードで見せる。
+ * 見た記録は端末に覚えておく。はじめて開いた端末では、今までの分はおいわいしない
+ */
+function checkCelebrations() {
+  if (!CHILD || CHILD.asParent || !CHILD.data) return;
+  const d = CHILD.data;
+  const key = 'okd_seen_' + CHILD.id;
+  const approved = d.history.filter((r) => (r.type === 'chore' || r.type === 'bonus' || r.type === 'allowance') &&
+    r.status === 'approved' && !String(r.id).startsWith('tmp_'));
+  let seen = null;
+  try { seen = JSON.parse(lsGet(key)); } catch (e) { /* 読めなければ初回あつかい */ }
+  lsSet(key, JSON.stringify({ ids: approved.map((r) => r.id).concat(seen ? seen.ids : []).slice(0, 300) }));
+  if (!seen) return;
+  const fresh = approved.filter((r) => seen.ids.indexOf(r.id) < 0);
+  if (!fresh.length) return;
+
+  let icon = '🎉';
+  let title = 'しょうにんされたよ！';
+  if (fresh.every((r) => r.type === 'bonus')) { icon = '🎁'; title = 'ボーナスをうけとったよ！'; }
+  if (fresh.every((r) => r.type === 'allowance')) { icon = '💰'; title = 'おこづかいをうけとったよ！'; }
+  const parts = ['<div class="cel-list">' + fresh.map((r) => '<div>' +
+    (r.type === 'bonus' ? '🎁' : r.type === 'allowance' ? '💰' : choreEmoji(r.name)) + ' ' + esc(r.name) +
+    ' <b class="plus">' + signedYen(r.amount) + '</b>' +
+    (r.thanks ? '<div class="thanks">💌 ' + esc(r.thanks) + (r.approvedBy ? '<small>― ' + esc(r.approvedBy) + '</small>' : '') + '</div>' : '') +
+    '</div>').join('') + '</div>'];
+
+  // 落下物：1件につき5こ。レア・SRが出たら知らせる（はじめてなら NEW!、確定開きなら 🔓）
+  const items = [].concat.apply([], fresh.map((r) => (r.drops || []).map((i, k) => ({ i, conf: !!r.confirmed && k === 0 }))));
+  const rares = items.map((x) => x.i);
+  if (rares.length) {
+    const col = d.collection || {};
+    const inFresh = {};
+    rares.forEach((i) => { inFresh[i] = (inFresh[i] || 0) + 1; });
+    const shownNew = {};
+    parts.unshift('<div class="cel-rares">' + items.map(({ i, conf }) => {
+      const isNew = (col[i] || 0) - inFresh[i] === 0 && !shownNew[i];
+      shownNew[i] = true;
+      return '<button type="button" class="cel-rare t' + rareTier(i) + '" data-r="' + i + '">' + RARES[i][0] +
+        ' <b>' + esc(rareName(i)) + '</b> が出たよ！' + (isNew ? '<span class="new">NEW!</span>' : '') +
+        (conf ? '<span class="conf">🔓確定開き</span>' : '') + '</button>';
+    }).join('') + '<div class="note">おすと、うんちくが読めるよ</div></div>');
+    const sr = rares.some((i) => rareTier(i) === 4);
+    icon = sr ? '🌟' : '✨';
+    title = sr ? 'SRが出た！！' : 'レアが出た！';
+    if ($('childPaneZukan').classList.contains('hidden')) $('zukanDot').classList.remove('hidden');
+  }
+  $('celebrateIcon').textContent = icon;
+  $('celebrateTitle').textContent = title;
+  $('celebrateBody').innerHTML = parts.join('');
+  $('celebrateBody').querySelectorAll('.cel-rare').forEach((b) => { b.onclick = () => showRareOver(Number(b.dataset.r)); });
+  // 落下物（はずれ＋レア）。レアがあれば演出がおわってからカードを出す
+  const total = fresh.length * ((d.dropRates || {}).perApproval || 5);
+  dropRain(total - rares.length, rares).then(() => $('celebrate').classList.remove('hidden'));
+}
+
 // ===================== 親画面 =====================
 
 let USERS = null;
@@ -1136,6 +1517,8 @@ async function refreshSettings() {
     $('setAlDay').value = s.allowance.day || 1;
     $('setAlStart').value = s.allowance.start || new Date().toISOString().slice(0, 7);
     $('setHistoryLimit').value = s.historyLimit;
+    $('setIntOn').checked = s.interest.rate > 0;
+    $('setIntRate').value = s.interest.rate > 0 ? s.interest.rate : 1;
     const el = $('deviceList');
     // 全体ロック（端末を変えながらの総当たり対策）が働いているとき
     const globalHtml = s.globalLockUntil
@@ -1210,7 +1593,8 @@ async function saveSettings() {
       bonusSameDay: $('setBonusSame').checked,
       bonusStreak: $('setBonusStreak').checked,
       allowance: { enabled: $('setAlEnabled').checked, amount: $('setAlAmount').value, day: $('setAlDay').value, start: $('setAlStart').value },
-      historyLimit: $('setHistoryLimit').value
+      historyLimit: $('setHistoryLimit').value,
+      interest: { on: $('setIntOn').checked, rate: $('setIntRate').value }
     }, uuid());
     toast(r.message);
     refreshSettings();

@@ -23,6 +23,7 @@
   if (/[?&]demo=1/.test(location.search)) document.write('<script src="demo/mock.js"><\/script>');
 </script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js" defer></script>
+<script src="rares.js" defer></script>
 <script src="app.js" defer></script>
 </head>
 <body>
@@ -105,6 +106,7 @@
     <button data-tab="money" class="active">ざんだか<span class="tab-dot hidden" id="moneyDot">●</span></button>
     <button data-tab="chore">おてつだい</button>
     <button data-tab="cal">カレンダー</button>
+    <button data-tab="zukan">ずかん<span class="tab-dot hidden" id="zukanDot">●</span></button>
   </div>
 
   <!-- ざんだか：残高・おこづかい・ボーナス・つかったきろく・お手伝い以外のりれき -->
@@ -113,6 +115,9 @@
       <div class="balance-label">いまの残高</div>
       <div class="balance-amount" id="childBalance">-</div>
     </div>
+
+    <!-- りそく：親が設定したときだけ -->
+    <div class="interest-card hidden" id="interestYen"></div>
 
     <div class="bonus-card hidden" id="allowanceBox">
       <div id="allowanceText"></div>
@@ -139,6 +144,9 @@
       <input type="text" id="usageMemo" placeholder="なににつかった？">
       <button class="btn btn-main" id="btnUsage">きろくする</button>
     </div>
+
+    <div class="section-title">ちょきん計算き</div>
+    <div class="sim-card" id="simCard"></div>
 
     <div class="section-title">りれき（お金の出入り）</div>
     <div id="childHistory"></div>
@@ -178,7 +186,25 @@
     </div>
     <div id="calDetail"></div>
   </div>
+
+  <!-- ずかん：レア落下物のずかん（10×10）・確定開き -->
+  <div class="pane hidden" id="childPaneZukan">
+    <div class="section-title">レアずかん <span class="rare-count" id="rareCount"></span></div>
+    <div class="confirm-box" id="confirmBox"></div>
+    <div class="rare-grid" id="rareGrid"></div>
+    <div class="note" id="rareNote"></div>
+  </div>
 </section>
+
+<!-- ============ おいわい（承認された・レアが出た・ボーナスやおこづかいをうけとった） ============ -->
+<div class="celebrate hidden" id="celebrate">
+  <div class="celebrate-card">
+    <div class="celebrate-big" id="celebrateIcon">🎉</div>
+    <div class="celebrate-title" id="celebrateTitle"></div>
+    <div id="celebrateBody"></div>
+    <button class="btn btn-main" id="btnCelebrateOk">やったね！</button>
+  </div>
+</div>
 
 <!-- ============ じぶんのばんごう（子供が自分のPINを変える） ============ -->
 <section id="screenPin" class="screen hidden">
@@ -260,6 +286,14 @@
       <label class="lbl" for="setAlStart">開始年月</label>
       <input type="month" id="setAlStart">
       <div class="note">支給日を過ぎると子供の画面に「おこづかい発生中」が出て、押すと1か月分ずつ受け取れます（その月の支給日の日付で記録）。</div>
+    </div>
+
+    <div class="section-title">りそく（使わずにためると、毎月ふえる）</div>
+    <div class="form">
+      <label class="check"><input type="checkbox" id="setIntOn"> 残高にりそくを付ける</label>
+      <label class="lbl" for="setIntRate">月の%（例：1 → 1,000円なら毎月+10円）</label>
+      <input type="number" id="setIntRate" inputmode="decimal" min="0.1" max="20" step="0.1">
+      <div class="note">毎月、月末の残高 × % を切りすてで計算し、子供の画面で「うけとる」を押すと翌月1日付で入ります。受け取っていない月のりそくにも次の月のりそくが付きます（ふくり）。オンにした月から付き始めます（さかのぼりません）。りそくは本物のお金なので、払える範囲の%にしてください。</div>
     </div>
 
     <div class="section-title">りれきの表示件数</div>

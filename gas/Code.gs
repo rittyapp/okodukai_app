@@ -19,8 +19,9 @@
  *   BONUS_SAME_DAY_ENABLED / BONUS_STREAK_ENABLED … 「1日3回目」「3日連続」ボーナスの有効/無効（'false' で無効）
  *   ALLOWANCE_ENABLED / ALLOWANCE_AMOUNT / ALLOWANCE_DAY / ALLOWANCE_START … 定期おこづかい（金額・毎月の支給日・開始年月 yyyy-MM）
  *   INTEREST_YEN_RATE / INTEREST_YEN_START … りそく（月の%。0か空＝なし）と付け始めた月（yyyy-MM）。設定タブから変更
- *   DROP_TEST_BOOST     … レア落下物の確率を何倍にするか（お試し用。ふだんは空＝1倍）
- *   CONFIRM_ARMED_<子供ID> / CONFIRM_USED_<子供ID> / CONFIRMED_<子供ID> … 確定開きの状態。自動で入る（手で触らない）
+ *   DROP_TEST_BOOST     … ずかんの落下物の確率を何倍にするか（お試し用。ふだんは空＝1倍。新しく引くくじだけに効く）
+ *   CONFIRM_ARMED_<ユーザーID> / CONFIRM_USED_<ユーザーID> … 確定開き（子供も親も）の状態。自動で入る（手で触らない）
+ *   CONFIRMED_<子供ID>  … v3.3 の確定開きの結果（v3.3 までの記録を読むためだけに使う）
  *   sess_<token>        … ログインセッション。自動で作成・削除される（手で触らない）。
  *
  * ── シート ──
@@ -32,7 +33,7 @@
  */
 
 // ===================== 設定値 =====================
-const SERVER_VERSION = '3.3.0';
+const SERVER_VERSION = '3.4.0';
 
 // 公開してよい情報のみ。クライアントIDはブラウザに渡る前提の値で、秘密ではない。
 const DEFAULT_OAUTH_CLIENT_ID = '337708567191-tpqbqqinfgm5bpje56ccdj2gmkphdngi.apps.googleusercontent.com';
@@ -50,8 +51,9 @@ const HEADERS = {
   ChoreMaster: ['ChoreId', 'Name', 'BaseAmount', 'Active', 'DailyMax'],
   // RequestedById … 押した（記録した）人のUserId。「押した本人なら取り消せる」の判定に使う。
   // Thanks … 親が承認のときに送った「ありがとう」スタンプ・ひとこと
+  // ApprovedById … 最後に承認・却下した人のUserId（システムは system）。Drops / ParentDrops … ずかんの落下物（ずかんの説明を参照）
   Ledger: ['Id', 'Timestamp', 'ChildId', 'Type', 'ChoreId', 'ChoreName', 'Status', 'Amount', 'Memo',
-    'RequestedBy', 'ApprovedBy', 'ApprovedAt', 'Hidden', 'RequestedById', 'Thanks'],
+    'RequestedBy', 'ApprovedBy', 'ApprovedAt', 'Hidden', 'RequestedById', 'Thanks', 'ApprovedById', 'Drops', 'ParentDrops'],
   PinDeviceState: ['DeviceId', 'FailCount', 'LockUntil', 'HardLocked', 'UpdatedAt', 'TotalFails', 'Hidden']
 };
 
@@ -68,13 +70,37 @@ const THANKS_DEFAULTS = ['ありがとう！', 'たすかったよ！', 'さす�
 const INTEREST_MAX_RATE = 20;
 const INTEREST_PREFIX = 'interest:'; // りそく行の ChoreId（interest:yen:yyyy-MM）。この行があれば「受取済み」
 
-// レア落下物（ガチャ）。承認されたお手伝い・うけとったボーナス・おこづかい1件につき DROPS_PER_APPROVAL こ落ちてくる。
-// 1こごとに SR は 1/1000、レアは 1/100（DROP_TEST_BOOST プロパティで何倍にもできる。お試し用）。
-// どれが落ちるかは記録のIDから決まる（読みなおしても、まとめて承認しても変わらない＝ズルできない）。
-// 画面側の図鑑（rares.js）は 0〜99 番：0〜44 レア★1（出やすさ3）/ 45〜74 レア★2（出やすさ2）/ 75〜89 レア★3（出やすさ1）/ 90〜99 SR
-const DROPS_PER_APPROVAL = 5;
-const DROP_SR_PER_100K = 100;     // 1/1000
-const DROP_RARE_PER_100K = 1000;  // 1/100
+// ずかん（落下物）。承認されたお手伝い・うけとったボーナス・おこづかい1件につき子供に DROPS_CHILD こ、
+// お手伝いを承認した親に DROPS_PARENT こ落ちてくる。1こごとに SR 1/100・レア 1/10（DROP_TEST_BOOST で何倍にもできる。お試し用）。
+// レアの中は ★1:★2:★3 ＝ 3:2:1 の出やすさ（RARE_WEIGHT）。くじは承認したときに引いて Ledger に保存する
+const DROPS_CHILD = 5;
+const DROPS_PARENT = 2;
+const DROP_SR_PER_100K = 1000;    // 1/100
+const DROP_RARE_PER_100K = 10000; // 1/10
+const RARE_WEIGHT = { 1: 3, 2: 2, 3: 1 };
+// ずかんの一覧 [ずかんID, ランク(1〜3＝レア★1〜★3, 4＝SR)]。画面側の zukan.js と同じ順番・同じID。
+// ID と順番は変えない（v3.3 までの記録はこの順番の番号で読む）。新しく足すときは最後に追加し、zukan.js にも足す
+const ZUKAN_POOL = [
+  ['star', 1], ['pig', 1], ['cat', 1], ['dog', 1], ['onigiri', 1], ['apple', 1],
+  ['banana', 1], ['frog', 1], ['fish', 1], ['sakura', 1], ['strawberry', 1], ['penguin', 1],
+  ['elephant', 1], ['giraffe', 1], ['panda', 1], ['koala', 1], ['rabbit', 1], ['turtle', 1],
+  ['snail', 1], ['honeybee', 1], ['ladybug', 1], ['butterfly', 1], ['ant', 1], ['donut', 1],
+  ['pizza', 1], ['softcream', 1], ['chocolate', 1], ['egg', 1], ['bread', 1], ['watermelon', 1],
+  ['corn', 1], ['carrot', 1], ['mushroom', 1], ['sunflower', 1], ['rainbow', 1], ['cloud', 1],
+  ['sun', 1], ['moon', 1], ['snowman', 1], ['balloon', 1], ['socks', 1], ['toothbrush', 1],
+  ['toiletpaper', 1], ['pencil', 1], ['rice', 1], ['owl', 2], ['octopus', 2], ['squid', 2],
+  ['shark', 2], ['dolphin', 2], ['whale', 2], ['flamingo', 2], ['sloth', 2], ['hedgehog', 2],
+  ['otter', 2], ['camel', 2], ['kangaroo', 2], ['crocodile', 2], ['parrot', 2], ['rooster', 2],
+  ['duck', 2], ['squirrel', 2], ['bat', 2], ['snake', 2], ['crab', 2], ['shrimp', 2],
+  ['pufferfish', 2], ['volcano', 2], ['cactus', 2], ['pineapple', 2], ['avocado', 2], ['cheese', 2],
+  ['honey', 2], ['tornado', 2], ['snowflake', 2], ['unicorn', 3], ['dragon', 3], ['mermaid', 3],
+  ['fairy', 3], ['genie', 3], ['ghost', 3], ['alien', 3], ['trex', 3], ['plesiosaur', 3],
+  ['mammoth', 3], ['peacock', 3], ['saturn', 3], ['comet', 3], ['shootingstar', 3], ['wizard', 3],
+  ['crown', 4], ['diamond', 4], ['trophy', 4], ['milkyway', 4], ['crystalball', 4], ['key', 4],
+  ['gift', 4], ['moneybag', 4], ['miraclestar', 4], ['clover', 4]
+];
+const ZUKAN_TIER = {};
+ZUKAN_POOL.forEach(function (p) { ZUKAN_TIER[p[0]] = p[1]; });
 
 // お手伝いの回数制限（子供が押すとき。親が代わりに押す場合は制限しない）
 const DAILY_LIMIT = 3;
@@ -118,6 +144,7 @@ const API = {
   receiveAllowance: apiReceiveAllowance_, changeMyPin: apiChangeMyPin_,
   receiveInterest: apiReceiveInterest_, useConfirm: apiUseConfirm_,
   // 親のみ
+  zukan: apiZukan_,
   pending: apiPending_, approve: apiApprove_, reject: apiReject_, editEntry: apiEditEntry_,
   revertEntry: apiRevertEntry_, hideEntry: apiHideEntry_, addAdjustment: apiAddAdjustment_,
   saveChore: apiSaveChore_, deleteChore: apiDeleteChore_,
@@ -321,6 +348,7 @@ function repairSheets_() {
   }
 
   cleanupDevices_();
+  backfillDrops_(report); // v3.3 までの記録のずかんの結果を保存
   if (!report.length) report.push('修正が必要な箇所はありませんでした');
   return report;
 }
@@ -372,7 +400,10 @@ function readTable_(name) {
   TABLE_CACHE_[name] = { headers: headers, rows: rows };
   return TABLE_CACHE_[name];
 }
-function invalidate_(name) { delete TABLE_CACHE_[name]; }
+function invalidate_(name) {
+  delete TABLE_CACHE_[name];
+  if (name === SHEET_LEDGER) delete TABLE_CACHE_.__collections; // ずかんの集計も読み直す
+}
 
 function appendRow_(name, obj) {
   const t = readTable_(name);
@@ -794,11 +825,15 @@ function findLedger_(id) {
   if (!r) throw new Error('対象の記録が見つかりません。');
   return r;
 }
+/** 記録を1行足す。承認済みで作る記録（親が記録・システムの受け取り）は、ここでずかんのくじも引く。足した行を返す */
 function addLedger_(o) {
-  appendRow_(SHEET_LEDGER, Object.assign({
+  const row = Object.assign({
     Id: newId_(), Timestamp: new Date(), ChoreId: '', ChoreName: '', Memo: '',
-    ApprovedBy: '', ApprovedAt: '', Hidden: ''
-  }, o));
+    ApprovedBy: '', ApprovedAt: '', Hidden: '', ApprovedById: ''
+  }, o);
+  Object.assign(row, rollOnApprove_(row));
+  appendRow_(SHEET_LEDGER, row);
+  return row;
 }
 function appendMemo_(memo, add) {
   memo = String(memo || '');
@@ -850,9 +885,9 @@ function outRow_(r, viewer, childNames) {
     name: labelOf_(r), status: r.Status, amount: Number(r.Amount) || 0, memo: String(r.Memo || ''),
     requestedBy: String(r.RequestedBy || ''), approvedBy: String(r.ApprovedBy || ''),
     thanks: String(r.Thanks || ''),
-    // この記録で落ちたレア・SR（はずれはふくめない）と、1こ目が確定開きで出たものか
-    drops: dropsOf_(r, dropBoost_()),
-    confirmed: dropsFor_(r) && confirmedItem_(r) !== null,
+    // この記録で子供に落ちたレア・SR（ずかんID。はずれはふくめない）と、1こ目が確定開きで出たものか
+    drops: childDrops_(r).ids,
+    confirmed: childDrops_(r).confirmed,
     canCancel: canCancel_(r, viewer),
     // 親のボタン：申請中＝承認・却下・編集／承認済み＝却下・編集／却下・取消＝承認（取消は除く）・非表示
     // 子供：自分が押した申請中のお手伝いの日付だけ
@@ -866,147 +901,228 @@ function outRow_(r, viewer, childNames) {
   return o;
 }
 
-// ===================== レア落下物（ガチャ） =====================
+// ===================== ずかん（落下物・確定開き） =====================
+//
+// v3.4 から：落ちたものは承認したときにくじを引いて Ledger に保存する（あとで確率や種類を変えても過去は変わらない）
+//   Drops       … 子供の分（その記録の ChildId の子供）。ずかんID をカンマでつないだもの
+//   ParentDrops … 承認した親の分。「親のUserId|ずかんID,ずかんID」
+//   確定開きで出たものは先頭に「!」。くじを引いて何も出なかったら「-」（引きずみの印）
+// v3.3 までに承認された記録（Drops が空）は、v3.3 のやり方（記録IDから計算）で読む。修復ボタンで Drops に書きこむ
 
-/** 文字列から 0〜2^32-1 の数を作る（FNV-1a）。同じ文字列なら必ず同じ数 */
+/** 文字列から 0〜2^32-1 の数を作る（FNV-1a）。v3.3 までの記録を読むのに使う */
 function hash32_(s) {
   let h = 0x811c9dc5;
   for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
   return h >>> 0;
 }
-function dropBoost_() { const b = Number(props_().getProperty('DROP_TEST_BOOST') || 1); return b >= 1 && b <= 100 ? b : 1; }
-/** 落下物が出る記録：承認されたお手伝い・うけとったボーナス・おこづかい */
+/** お試し用に確率を何倍にするか（DROP_TEST_BOOST。ふだんは空＝1倍）。新しく引くくじだけに効く */
+function dropBoost_() { const b = Number(props_().getProperty('DROP_TEST_BOOST') || 1); return b >= 1 && b <= 9 ? b : 1; }
+/** 子供の分の落下物が出る記録：承認されたお手伝い・うけとったボーナス・おこづかい */
 function dropsFor_(r) { return r.Status === 'approved' && (r.Type === 'chore' || r.Type === 'bonus' || r.Type === 'allowance'); }
-/** その記録で落ちたレア・SRの番号（はずれはふくめない）。確定開きの記録は1こ目が確定のレアになる */
-function dropsOf_(r, boost) {
-  if (!dropsFor_(r)) return [];
+
+/** "!octopus,pig" → {ids: ['octopus','pig'], confirmed: true} */
+function parseDrops_(s) {
+  s = String(s || '');
+  if (!s || s === '-') return { ids: [], confirmed: false };
+  const ids = s.split(',').filter(Boolean);
+  const confirmed = ids.length > 0 && ids[0].charAt(0) === '!';
+  return { ids: ids.map(function (x) { return x.replace(/^!/, ''); }).filter(function (x) { return ZUKAN_TIER[x]; }), confirmed: confirmed };
+}
+/** v3.3 までの記録：記録IDから計算（当時の確率 レア1/100・SR1/1000。番号は ZUKAN_POOL の順） */
+function legacyDrops_(r) {
   const out = [];
-  const fixed = confirmedItem_(r);
-  if (fixed !== null) out.push(fixed);
-  for (let k = fixed !== null ? 1 : 0; k < DROPS_PER_APPROVAL; k++) {
+  let confirmed = false;
+  const fixed = legacyConfirmed_()[String(r.Id)];
+  if (fixed !== undefined) { out.push(ZUKAN_POOL[fixed][0]); confirmed = true; }
+  for (let k = fixed !== undefined ? 1 : 0; k < 5; k++) {
     const key = String(r.Id) + ':' + k;
     const roll = hash32_(key) % 100000;
     const pick = hash32_(key + ':item');
-    if (roll < DROP_SR_PER_100K * boost) out.push(90 + pick % 10);
-    else if (roll < (DROP_SR_PER_100K + DROP_RARE_PER_100K) * boost) {
-      const w = pick % 210; // ★1:45種×3 / ★2:30種×2 / ★3:15種×1
-      out.push(w < 135 ? Math.floor(w / 3) : w < 195 ? 45 + Math.floor((w - 135) / 2) : 75 + (w - 195));
-    }
+    let i = -1;
+    if (roll < 100) i = 90 + pick % 10;
+    else if (roll < 1100) { const w = pick % 210; i = w < 135 ? Math.floor(w / 3) : w < 195 ? 45 + Math.floor((w - 135) / 2) : 75 + (w - 195); }
+    if (i >= 0) out.push(ZUKAN_POOL[i][0]);
   }
-  return out;
+  return { ids: out, confirmed: confirmed };
 }
-/** 図鑑：番号 → 持っている数 */
-function collectionOf_(rows) {
-  const boost = dropBoost_();
-  const c = {};
-  rows.forEach(function (r) { dropsOf_(r, boost).forEach(function (i) { c[i] = (c[i] || 0) + 1; }); });
-  return c;
+/** v3.3 の確定開きの結果（スクリプトプロパティ CONFIRMED_<子供ID> = [{row, item: 番号}]） */
+function legacyConfirmed_() {
+  if (!TABLE_CACHE_.__legacyConfirmed) {
+    const m = {};
+    const all = props_().getProperties();
+    Object.keys(all).forEach(function (k) {
+      if (k.indexOf('CONFIRMED_') !== 0) return;
+      try { JSON.parse(all[k]).forEach(function (e) { if (typeof e.item === 'number') m[e.row] = e.item; }); } catch (e) { /* 壊れていたら無視 */ }
+    });
+    TABLE_CACHE_.__legacyConfirmed = m;
+  }
+  return TABLE_CACHE_.__legacyConfirmed;
 }
-/** 兄弟（ほかの有効な子供）が見つけたもの：番号 → 名前の一覧（図鑑でシルエット表示に使う） */
-function siblingsFound_(childId) {
-  const boost = dropBoost_();
-  const names = {};
-  listUsers_().forEach(function (u) { if (u.Role === 'child' && isActive_(u) && u.UserId !== childId) names[u.UserId] = u.Name; });
+/** その記録で子供に落ちたもの */
+function childDrops_(r) {
+  if (!dropsFor_(r)) return { ids: [], confirmed: false };
+  return r.Drops ? parseDrops_(r.Drops) : legacyDrops_(r);
+}
+/** その記録で承認した親に落ちたもの {owner, ids, confirmed} */
+function parentDrops_(r) {
+  const s = String(r.ParentDrops || '');
+  const bar = s.indexOf('|');
+  if (r.Status !== 'approved' || r.Type !== 'chore' || bar < 0) return { owner: '', ids: [], confirmed: false };
+  return Object.assign({ owner: s.substring(0, bar) }, parseDrops_(s.substring(bar + 1)));
+}
+
+/** 人ごとのずかん：その人のID → {ずかんID: 数}。子供は Drops、親は ParentDrops */
+function collections_() {
+  if (!TABLE_CACHE_.__collections) {
+    const c = {};
+    const add = function (who, ids) { if (!who) return; c[who] = c[who] || {}; ids.forEach(function (id) { c[who][id] = (c[who][id] || 0) + 1; }); };
+    ledgerRows_().forEach(function (r) {
+      add(String(r.ChildId), childDrops_(r).ids);
+      const p = parentDrops_(r);
+      add(p.owner, p.ids);
+    });
+    TABLE_CACHE_.__collections = c;
+  }
+  return TABLE_CACHE_.__collections;
+}
+function collectionOf_(personId) { return collections_()[String(personId)] || {}; }
+
+/** 家族（有効な子供と親）のほかの人が見つけたもの：ずかんID → 名前の一覧（シルエット表示用） */
+function familyFound_(selfId) {
+  const all = collections_();
   const out = {};
-  ledgerRows_().forEach(function (r) {
-    const n = names[String(r.ChildId)];
-    if (!n) return;
-    dropsOf_(r, boost).forEach(function (i) {
-      out[i] = out[i] || [];
-      if (out[i].indexOf(n) < 0) out[i].push(n);
+  allUsers_().filter(isActive_).forEach(function (u) {
+    if (u.UserId === selfId) return;
+    Object.keys(all[u.UserId] || {}).forEach(function (id) {
+      out[id] = out[id] || [];
+      if (out[id].indexOf(u.Name) < 0) out[id].push(u.Name);
     });
   });
   return out;
 }
 
-// ---------- 確定開き（月に1回。次に承認された記録の1こ目が「まだ持っていないレア」になる。SRは対象外） ----------
-// CONFIRM_ARMED_<子供ID> … 使って待っている状態 {armedAt: ISO}
-// CONFIRM_USED_<子供ID>  … 最後に使った月（yyyy-MM）。同じ月は1回だけ
-// CONFIRMED_<子供ID>     … 決まった確定 [{row: 記録ID, item: 番号, armedAt}]（あとで持ち物が増えても結果が変わらないように保存）
-
-/** 確定の一覧（1回の通信の間だけ覚えておく。TABLE_CACHE_ に入れると通信ごとに読み直される） */
-function confirmedMap_() {
-  if (!TABLE_CACHE_.__confirmed) {
-    const m = {};
-    const all = props_().getProperties();
-    Object.keys(all).forEach(function (k) {
-      if (k.indexOf('CONFIRMED_') !== 0) return;
-      try { JSON.parse(all[k]).forEach(function (e) { m[e.row] = e.item; }); } catch (e) { /* 壊れていたら無視 */ }
-    });
-    TABLE_CACHE_.__confirmed = m;
-  }
-  return TABLE_CACHE_.__confirmed;
-}
-function confirmedItem_(r) { const v = confirmedMap_()[String(r.Id)]; return v === undefined ? null : v; }
-function confirmList_(childId) { try { return JSON.parse(props_().getProperty('CONFIRMED_' + childId) || '[]'); } catch (e) { return []; } }
-
-/** まだ持っていないレア（SRはのぞく）の番号 */
-function missingRares_(rows) {
-  const col = collectionOf_(rows);
+/** くじを n 回引く（1回ごとに SR 1/100・レア 1/10。レアの中は ★1:★2:★3 ＝ 3:2:1 の出やすさ） */
+function drawItems_(n) {
+  const boost = dropBoost_();
+  const sr = ZUKAN_POOL.filter(function (p) { return p[1] === 4; });
+  const rares = ZUKAN_POOL.filter(function (p) { return p[1] < 4; });
+  const total = rares.reduce(function (t, p) { return t + RARE_WEIGHT[p[1]]; }, 0);
   const out = [];
-  for (let i = 0; i < 90; i++) if (!col[i]) out.push(i);
+  for (let k = 0; k < n; k++) {
+    const roll = Math.random() * 100000;
+    if (roll < DROP_SR_PER_100K * boost) out.push(sr[Math.floor(Math.random() * sr.length)][0]);
+    else if (roll < (DROP_SR_PER_100K + DROP_RARE_PER_100K) * boost) {
+      let w = Math.random() * total;
+      for (let i = 0; i < rares.length; i++) { w -= RARE_WEIGHT[rares[i][1]]; if (w < 0) { out.push(rares[i][0]); break; } }
+    }
+  }
   return out;
 }
 
-/**
- * 確定開きを進める（子供の画面を開くたびに呼ぶ）。
- * ・確定した記録があとで却下されたら、確定をとりけして「待っている」状態にもどす
- * ・待っている状態で、使ったあとに承認された対象の記録があれば、その1こ目をまだ持っていないレアに決めて保存する
- */
-function settleConfirm_(childId, rows) {
-  const p = props_();
-  const byId = {};
-  rows.forEach(function (r) { byId[String(r.Id)] = r; });
-  let list = confirmList_(childId);
-  const lost = list.filter(function (e) { const r = byId[e.row]; return r && r.Status !== 'approved'; });
-  if (lost.length) {
-    list = list.filter(function (e) { return lost.indexOf(e) < 0; });
-    p.setProperty('CONFIRMED_' + childId, JSON.stringify(list));
-    if (!p.getProperty('CONFIRM_ARMED_' + childId)) p.setProperty('CONFIRM_ARMED_' + childId, JSON.stringify({ armedAt: lost[0].armedAt }));
-    delete TABLE_CACHE_.__confirmed;
+/** 確定開き：待っているか（{armedAt, fromRow}） */
+function armedOf_(personId) {
+  try { return JSON.parse(props_().getProperty('CONFIRM_ARMED_' + personId) || 'null'); } catch (e) { return null; }
+}
+/** まだ持っていないレア（SRはのぞく） */
+function missingRares_(personId) {
+  const col = collectionOf_(personId);
+  return ZUKAN_POOL.filter(function (p) { return p[1] < 4 && !col[p[0]]; }).map(function (p) { return p[0]; });
+}
+/** n 回くじを引く。確定開きを待っていれば1こ目を「まだ持っていないレア」にする。保存する文字列を返す */
+function rollFor_(personId, n) {
+  const items = [];
+  const armed = armedOf_(personId);
+  if (armed) {
+    const missing = missingRares_(personId);
+    if (missing.length) {
+      items.push('!' + missing[Math.floor(Math.random() * missing.length)]);
+      props_().deleteProperty('CONFIRM_ARMED_' + personId);
+    }
   }
-  let armed = null;
-  try { armed = JSON.parse(p.getProperty('CONFIRM_ARMED_' + childId) || 'null'); } catch (e) { armed = null; }
-  if (!armed) return;
-  const since = new Date(armed.armedAt).getTime();
-  const used = {};
-  list.forEach(function (e) { used[e.row] = true; });
-  const target = rows.filter(function (r) {
-    return dropsFor_(r) && !used[String(r.Id)] && r.ApprovedAt && new Date(r.ApprovedAt).getTime() > since;
-  }).sort(function (a, b) { return new Date(a.ApprovedAt) - new Date(b.ApprovedAt); })[0];
-  if (!target) return;
-  const missing = missingRares_(rows);
-  if (!missing.length) return; // レアがぜんぶそろっているときは待ったまま
-  // 記録IDから決める（同時に画面を開いても同じ結果になる）
-  const item = missing[hash32_(String(target.Id) + ':confirm') % missing.length];
-  list.push({ row: String(target.Id), item: item, armedAt: armed.armedAt });
-  p.setProperty('CONFIRMED_' + childId, JSON.stringify(list));
-  p.deleteProperty('CONFIRM_ARMED_' + childId);
-  delete TABLE_CACHE_.__confirmed;
+  return items.concat(drawItems_(n - items.length)).join(',') || '-';
 }
 
-/** 子供の画面に出す確定開きのようす */
-function confirmState_(childId, rows) {
-  const p = props_();
-  const armed = !!p.getProperty('CONFIRM_ARMED_' + childId);
-  const usedThisMonth = p.getProperty('CONFIRM_USED_' + childId) === thisMonth_();
-  const allRares = !missingRares_(rows).length;
-  return { armed: armed, usedThisMonth: usedThisMonth, allRares: allRares, available: !armed && !usedThisMonth && !allRares };
+/**
+ * 承認された記録にくじを引く（addLedger_ と承認のときに呼ぶ）。もう引いてある記録は引き直さない。
+ * 子供の分は Drops、承認した人が親なら ParentDrops。追加で書く列を返す
+ */
+function rollOnApprove_(r) {
+  const patch = {};
+  if (r.Status !== 'approved') return patch;
+  // 確定開きで出た記録を却下→再承認したときは、待っていた確定開きをもどす（前の結果がそのまま有効になる）
+  [String(r.ChildId), String(r.ApprovedById || '')].forEach(function (who) {
+    const a = who && armedOf_(who);
+    if (a && a.fromRow === String(r.Id)) props_().deleteProperty('CONFIRM_ARMED_' + who);
+  });
+  if (dropsFor_(r) && !r.Drops) patch.Drops = rollFor_(String(r.ChildId), DROPS_CHILD);
+  const approver = r.ApprovedById ? findUserById_(String(r.ApprovedById)) : null;
+  if (r.Type === 'chore' && !r.ParentDrops && approver && approver.Role === 'parent') {
+    patch.ParentDrops = approver.UserId + '|' + rollFor_(approver.UserId, DROPS_PARENT);
+  }
+  if (Object.keys(patch).length) delete TABLE_CACHE_.__collections;
+  return patch;
 }
 
-/** 確定開きを使う（月に1回） */
+/** 却下したとき：その記録で確定開きを使っていたら、もう一度待っている状態にもどす */
+function rearmOnReject_(r) {
+  const fix = function (who, confirmed) {
+    if (!who || !confirmed || armedOf_(who)) return;
+    props_().setProperty('CONFIRM_ARMED_' + who, JSON.stringify({ armedAt: new Date().toISOString(), fromRow: String(r.Id) }));
+  };
+  if (r.Drops) fix(String(r.ChildId), parseDrops_(r.Drops).confirmed);
+  const p = String(r.ParentDrops || '');
+  if (p.indexOf('|') > 0) fix(p.substring(0, p.indexOf('|')), parseDrops_(p.substring(p.indexOf('|') + 1)).confirmed);
+}
+
+/** 画面に出すずかん：自分の持ち物・家族が見つけたもの・確定開き・確率 */
+function zukanFor_(personId) {
+  const usedThisMonth = props_().getProperty('CONFIRM_USED_' + personId) === thisMonth_();
+  const armed = !!armedOf_(personId);
+  const allRares = !missingRares_(personId).length;
+  return {
+    collection: collectionOf_(personId),
+    familyFound: familyFound_(personId),
+    confirm: { armed: armed, usedThisMonth: usedThisMonth, allRares: allRares, available: !armed && !usedThisMonth && !allRares },
+    rates: { child: DROPS_CHILD, parent: DROPS_PARENT, sr: DROP_SR_PER_100K * dropBoost_(), rare: DROP_RARE_PER_100K * dropBoost_() }
+  };
+}
+
+/** 親が自分のずかんを見る */
+function apiZukan_(ctx) {
+  const me = requireUser_(ctx.token, 'parent');
+  return zukanFor_(me.UserId);
+}
+
+/** 確定開きを使う（月に1回）。子供は自分の分、親は childId があればその子の分、なければ自分の分 */
 function apiUseConfirm_(ctx) {
   const me = requireUser_(ctx.token);
-  const child = targetChild_(me, ctx.args.childId);
-  const rows = ledgerRows_().filter(function (r) { return String(r.ChildId) === child.UserId; });
-  settleConfirm_(child.UserId, rows);
-  const st = confirmState_(child.UserId, rows);
-  if (st.armed) throw new Error('もう使っているよ。つぎに承認されるのをまってね。');
-  if (st.usedThisMonth) throw new Error('確定開きは月に1回だよ。来月1日にまた使えるよ。');
-  if (st.allRares) throw new Error('レアはもうぜんぶそろっているよ！SRはじぶんの運でさがそう。');
-  props_().setProperty('CONFIRM_ARMED_' + child.UserId, JSON.stringify({ armedAt: new Date().toISOString() }));
-  props_().setProperty('CONFIRM_USED_' + child.UserId, thisMonth_());
+  const who = me.Role === 'parent' && !ctx.args.childId ? me.UserId : targetChild_(me, ctx.args.childId).UserId;
+  const z = zukanFor_(who);
+  if (z.confirm.armed) throw new Error('もう使っているよ。つぎに承認されるのをまってね。');
+  if (z.confirm.usedThisMonth) throw new Error('確定開きは月に1回だよ。来月1日にまた使えるよ。');
+  if (z.confirm.allRares) throw new Error('レアはもうぜんぶそろっているよ！SRはじぶんの運でさがそう。');
+  props_().setProperty('CONFIRM_ARMED_' + who, JSON.stringify({ armedAt: new Date().toISOString(), fromRow: '' }));
+  props_().setProperty('CONFIRM_USED_' + who, thisMonth_());
   return { message: '確定開きを使ったよ！つぎに承認されたとき、まだ持っていないレアがかならず落ちてくるよ。' };
+}
+
+/** 修復：v3.3 までの承認済みの記録に、当時の計算結果を Drops として書きこむ（以後は読み直しても変わらない） */
+function backfillDrops_(report) {
+  const sh = ss_().getSheetByName(SHEET_LEDGER);
+  const t = readTable_(SHEET_LEDGER);
+  const col = t.headers.indexOf('Drops') + 1;
+  if (col < 1 || !t.rows.length) return;
+  let n = 0;
+  const values = t.rows.map(function (r) {
+    if (r.Drops || !dropsFor_(r)) return [r.Drops || ''];
+    n++;
+    const d = legacyDrops_(r);
+    return [d.ids.length ? d.ids.map(function (id, k) { return (k === 0 && d.confirmed ? '!' : '') + id; }).join(',') : '-'];
+  });
+  if (!n) return;
+  sh.getRange(2, col, values.length, 1).setValues(values);
+  invalidate_(SHEET_LEDGER);
+  report.push('これまでの記録 ' + n + '件のずかんの結果を保存しました');
 }
 
 // ===================== りそく（月末の残高に、月○%。親が設定タブで決める） =====================
@@ -1068,7 +1184,7 @@ function apiReceiveInterest_(ctx) {
       Timestamp: parseLocal_(monthAdd_(d.ym, 1) + '-01 00:00:00'),
       ChildId: child.UserId, Type: 'interest', ChoreId: INTEREST_PREFIX + 'yen:' + d.ym, ChoreName: d.label,
       Status: 'approved', Amount: d.amount, Memo: d.label + '（' + d.base + '円 × ' + d.rate + '%）',
-      RequestedBy: 'システム', RequestedById: 'system', ApprovedBy: 'システム', ApprovedAt: new Date()
+      RequestedBy: 'システム', RequestedById: 'system', ApprovedBy: 'システム', ApprovedById: 'system', ApprovedAt: new Date()
     });
   });
   const total = due.reduce(function (t, d) { return t + d.amount; }, 0);
@@ -1166,7 +1282,7 @@ function apiReceiveAllowance_(ctx) {
     Timestamp: parseLocal_(a.day + ' 00:00:00'), // 登録された支給日で記録
     ChildId: child.UserId, Type: 'allowance', ChoreId: ALLOWANCE_CHORE_PREFIX + a.ym, ChoreName: a.label,
     Status: 'approved', Amount: a.amount, Memo: a.label + ' ' + a.amount + '円',
-    RequestedBy: 'システム', RequestedById: 'system', ApprovedBy: 'システム', ApprovedAt: new Date()
+    RequestedBy: 'システム', RequestedById: 'system', ApprovedBy: 'システム', ApprovedById: 'system', ApprovedAt: new Date()
   });
   return { message: a.label + '（' + a.amount + '円）をうけとったよ！', remaining: due.length - 1 };
 }
@@ -1219,7 +1335,7 @@ function apiConfirmBonus_(ctx) {
       ChildId: child.UserId, Type: 'bonus', ChoreId: BONUS_CHORE_PREFIX + m.ym, ChoreName: m.label,
       Status: 'approved', Amount: m.amount,
       Memo: m.label + ' ' + m.amount + '円（同じ日3回目から ' + m.same + '円／3日連続 ' + m.streak + '円）',
-      RequestedBy: 'システム', RequestedById: 'system', ApprovedBy: 'システム', ApprovedAt: new Date()
+      RequestedBy: 'システム', RequestedById: 'system', ApprovedBy: 'システム', ApprovedById: 'system', ApprovedAt: new Date()
     });
   });
   const total = months.reduce(function (s, m) { return s + m.amount; }, 0);
@@ -1244,7 +1360,6 @@ function apiDashboard_(ctx) {
   const me = requireUser_(ctx.token);
   const child = targetChild_(me, ctx.args.childId);
   const rows = ledgerRows_().filter(function (r) { return String(r.ChildId) === child.UserId; });
-  settleConfirm_(child.UserId, rows); // 確定開きを待っていて、そのあと承認された記録があれば確定させる
   const today = todayStr_();
   const todayCount = rows.filter(function (r) { return isCountedChore_(r) && dayOf_(r.Timestamp) === today; }).length;
   const isToday = function (r) { return r.Type === 'unlock_request' && dayOf_(r.Timestamp) === today; };
@@ -1266,11 +1381,8 @@ function apiDashboard_(ctx) {
       sameDay: sameDayBonusOn_(), sameDayFrom: SAME_DAY_BONUS_FROM, sameDayAmount: SAME_DAY_BONUS_AMOUNT,
       streak: streakBonusOn_(), streakDays: STREAK_DAYS_FOR_BONUS, streakAmount: STREAK_BONUS_AMOUNT
     },
-    // レアずかん（番号 → 持っている数）・兄弟が見つけたもの・確定開き・落ちる確率（1こあたり10万分の○）
-    collection: collectionOf_(rows),
-    siblingFound: siblingsFound_(child.UserId),
-    confirm: confirmState_(child.UserId, rows),
-    dropRates: { perApproval: DROPS_PER_APPROVAL, sr: DROP_SR_PER_100K * dropBoost_(), rare: DROP_RARE_PER_100K * dropBoost_() },
+    // ずかん（ずかんID → 持っている数）・家族が見つけたもの・確定開き・落ちる数と確率（1こあたり10万分の○）
+    zukan: zukanFor_(child.UserId),
     // 表示件数より古いりれきは表示しない（非表示フラグは付けないので、カレンダーの日付からは見られる）
     history: choreRows.concat(moneyRows).sort(byNewest_).map(function (r) { return outRow_(r, me); }),
     historyLimit: limit,
@@ -1339,14 +1451,21 @@ function apiPressChore_(ctx) {
       throw new Error('今日はもう上限（' + DAILY_LIMIT + '回）だよ。もっとやりたい時は「親に追加をおねがいする」を押してね。');
     }
   }
-  // 親が押した場合は、その親が承認したものとして記録する
-  addLedger_({
+  // 親が押した場合は、その親が承認したものとして記録する（親のずかんのくじも引く）
+  const row = addLedger_({
     ChildId: child.UserId, Type: 'chore', ChoreId: chore.id, ChoreName: chore.name,
     Status: isParent ? 'approved' : 'pending', Amount: chore.amount,
     RequestedBy: me.Name, RequestedById: me.UserId,
-    ApprovedBy: isParent ? me.Name : '', ApprovedAt: isParent ? new Date() : ''
+    ApprovedBy: isParent ? me.Name : '', ApprovedById: isParent ? me.UserId : '', ApprovedAt: isParent ? new Date() : ''
   });
-  return { message: isParent ? chore.name + '（' + chore.amount + '円）を記録しました。' : chore.name + '（' + chore.amount + '円）をおくったよ。親の承認をまってね。' };
+  if (!isParent) return { message: chore.name + '（' + chore.amount + '円）をおくったよ。親の承認をまってね。' };
+  return Object.assign({ message: chore.name + '（' + chore.amount + '円）を記録しました。' }, parentResult_(row, me));
+}
+
+/** 親が承認・記録したときに返す：その親に落ちたもの・親のずかん（画面のおいわい用） */
+function parentResult_(row, me) {
+  const p = parentDrops_(row);
+  return { parentDrops: p.owner === me.UserId ? { ids: p.ids, confirmed: p.confirmed, count: DROPS_PARENT } : null, myCollection: collectionOf_(me.UserId) };
 }
 
 function apiRequestUnlock_(ctx) {
@@ -1374,7 +1493,7 @@ function apiAddUsage_(ctx) {
   addLedger_({
     ChildId: child.UserId, Type: 'usage', Status: isParent ? 'approved' : 'pending', Amount: amount,
     ChoreName: String(ctx.args.memo || '').trim(), Memo: '',
-    RequestedBy: me.Name, RequestedById: me.UserId, ApprovedBy: isParent ? me.Name : '', ApprovedAt: isParent ? new Date() : ''
+    RequestedBy: me.Name, RequestedById: me.UserId, ApprovedBy: isParent ? me.Name : '', ApprovedById: isParent ? me.UserId : '', ApprovedAt: isParent ? new Date() : ''
   });
   return { message: isParent ? 'きろくしました。' : 'きろくしたよ。親が確認するまでは自分で取り消せるよ。' };
 }
@@ -1415,13 +1534,15 @@ function apiApprove_(ctx) {
   if (isTrue_(r.Hidden)) throw new Error('非表示にした記録は、承認・却下を変更できません。');
   if (r.Status !== 'pending' && r.Status !== 'rejected') throw new Error('この記録は承認できません。');
   // 最後に決めた人だけを残す（ApprovedBy）。前の却下・再承認の書き込みは消す
-  const patch = { Status: 'approved', ApprovedBy: me.Name, ApprovedAt: new Date(), Memo: stripDecisionMemo_(r.Memo) };
+  const patch = { Status: 'approved', ApprovedBy: me.Name, ApprovedById: me.UserId, ApprovedAt: new Date(), Memo: stripDecisionMemo_(r.Memo) };
   // 「ありがとう」。お手伝いで親がえらばなかったら、ランダムでどれかを送る（再承認で空なら前のまま）
   let thanks = String(ctx.args.thanks || '').trim().substring(0, 40);
   if (!thanks && !r.Thanks && r.Type === 'chore') thanks = THANKS_DEFAULTS[Math.floor(Math.random() * THANKS_DEFAULTS.length)];
   if (thanks) patch.Thanks = thanks;
+  // ずかんのくじ（子供の分と、承認した親の分）。一度引いた記録は引き直さない
+  Object.assign(patch, rollOnApprove_(Object.assign({}, r, patch)));
   updateRow_(SHEET_LEDGER, r._row, patch);
-  return { message: r.Status === 'rejected' ? '再承認しました。' : '承認しました。' };
+  return Object.assign({ message: r.Status === 'rejected' ? '再承認しました。' : '承認しました。' }, parentResult_(Object.assign({}, r, patch), me));
 }
 
 /** 申請中・承認済みを却下にする（承認済み⇔却下は何度でも入れ替えられる） */
@@ -1432,9 +1553,11 @@ function apiReject_(ctx) {
   if (r.Status !== 'pending' && r.Status !== 'approved') throw new Error('この記録は却下できません。');
   const base = stripDecisionMemo_(r.Memo);
   updateRow_(SHEET_LEDGER, r._row, {
-    Status: 'rejected', ApprovedBy: me.Name, ApprovedAt: new Date(),
+    Status: 'rejected', ApprovedBy: me.Name, ApprovedById: me.UserId, ApprovedAt: new Date(),
     Memo: ctx.args.reason ? base + '［却下理由: ' + ctx.args.reason + '］' : base
   });
+  // ずかんの落下物はその記録に残る（却下中は数えない）。確定開きで出ていたら、確定開きを待っている状態にもどす
+  rearmOnReject_(r);
   return { message: '却下しました。' };
 }
 
@@ -1482,7 +1605,7 @@ function apiRevertEntry_(ctx) {
   const r = findLedger_(ctx.args.id);
   if (r.Status !== 'approved') throw new Error('承認済みの記録のみ、未承認に戻せます。');
   updateRow_(SHEET_LEDGER, r._row, {
-    Status: 'pending', ApprovedBy: '', ApprovedAt: '', Memo: appendMemo_(r.Memo, '［' + me.Name + 'が未承認に戻した］')
+    Status: 'pending', ApprovedBy: '', ApprovedById: '', ApprovedAt: '', Memo: appendMemo_(r.Memo, '［' + me.Name + 'が未承認に戻した］')
   });
   return { message: '未承認に戻しました。' };
 }
@@ -1502,7 +1625,7 @@ function apiAddAdjustment_(ctx) {
   addLedger_({
     ChildId: child.UserId, Type: 'adjustment', Status: 'approved', Amount: amount,
     ChoreName: String(ctx.args.memo || '').trim() || '残高調整',
-    RequestedBy: me.Name, RequestedById: me.UserId, ApprovedBy: me.Name, ApprovedAt: new Date()
+    RequestedBy: me.Name, RequestedById: me.UserId, ApprovedBy: me.Name, ApprovedById: me.UserId, ApprovedAt: new Date()
   });
   return { message: '残高を調整しました。' };
 }

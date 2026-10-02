@@ -100,13 +100,18 @@
     props.ALLOWANCE_AMOUNT = '500';
     props.ALLOWANCE_DAY = '1';
     props.ALLOWANCE_START = lm;
-    // 列：Id, Timestamp, ChildId, Type, ChoreId, ChoreName, Status, Amount, Memo, RequestedBy, ApprovedBy, ApprovedAt, Hidden, RequestedById, Thanks
+    // 列：Id, Timestamp, ChildId, Type, ChoreId, ChoreName, Status, Amount, Memo, RequestedBy, ApprovedBy, ApprovedAt, Hidden, RequestedById, Thanks,
+    //     ApprovedById, Drops, ParentDrops（承認済みのお手伝いは、ずかんのくじを引いたことにしておく。パパにも2こ）
+    const roll = (n) => S.drawItems_(n).join(',') || '-';
     const add = (child, day, hh, type, choreId, name, st, amt, thanks) => {
       const id = G.Utilities.getUuid();
       const kid = child === 'uAiri' ? 'あいり' : 'しょう';
       const ts = new Date(day + 'T' + hh + ':00+09:00');
+      const ok = st === 'approved';
+      const chore = ok && type === 'chore';
       sheets.Ledger.data.push([id, ts, child, type, choreId, name, st, amt, '',
-        kid, st === 'approved' ? 'パパ' : '', st === 'approved' ? ts : '', '', child, thanks || '']);
+        kid, ok ? 'パパ' : '', ok ? ts : '', '', child, thanks || '',
+        ok ? 'uPapa' : '', chore ? roll(5) : '', chore ? 'uPapa|' + roll(2) : '']);
       return id;
     };
     const C = { c01: ['ゴミ捨て', 30], c02: ['お風呂掃除', 30], c03: ['料理', 100], c04: ['食器洗い', 30], c05: ['洗濯物たたみ', 30], c06: ['掃除機がけ', 30] };
@@ -130,15 +135,13 @@
     // りそく：先月から月1%（先月分を「うけとる」ところから試せる）
     props.INTEREST_YEN_RATE = '1';
     props.INTEREST_YEN_START = lm;
-    // お試しでレアが見られるように、落ちる確率を3倍にしておく（本番は1倍：レア1/100・SR1/1000）
-    props.DROP_TEST_BOOST = '3';
     // あいりの端末は「ここまでは見た」ことにしておく（親が承認→あいりでログイン、でおいわいが出る）
     local.okd_seen_uAiri = JSON.stringify({ ids: seenIds });
   }
 
   window.OKD_BEFORE_BOOT = fetch('gas/Code.gs').then((r) => r.text()).then((code) => {
     const factory = new Function(Object.keys(G).join(','),
-      code + '\nreturn { doPost: doPost, repairSheets_: repairSheets_, TABLE_CACHE_: TABLE_CACHE_, createSession_: createSession_ };');
+      code + '\nreturn { doPost: doPost, repairSheets_: repairSheets_, TABLE_CACHE_: TABLE_CACHE_, createSession_: createSession_, drawItems_: drawItems_ };');
     const S = factory.apply(null, Object.values(G));
     seed(S);
     window.fetch = async (url, init) => {

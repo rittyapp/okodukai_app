@@ -23,7 +23,7 @@
   if (/[?&]demo=1/.test(location.search)) document.write('<script src="demo/mock.js"><\/script>');
 </script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js" defer></script>
-<script src="rares.js" defer></script>
+<script src="zukan.js" defer></script>
 <script src="app.js" defer></script>
 </head>
 <body>
@@ -231,6 +231,7 @@
     <button data-tab="pending" class="active">承認待ち</button>
     <button data-tab="users">ユーザー</button>
     <button data-tab="settings">設定</button>
+    <button data-tab="zukan">ずかん<span class="tab-dot hidden" id="pZukanDot">●</span></button>
   </div>
 
   <div class="pane" id="parentPanePending">
@@ -313,9 +314,20 @@
       その場合は、Apps Script で<b>新しいデプロイを作ってURLを変え</b>、古いデプロイを「アーカイブ」してから、新しい共有QRコードを家族に配り直してください（手順は README の「URLがもれたかもしれないとき」）。
     </div>
 
+    <div class="section-title">画像のクレジット</div>
+    <div class="note">ずかんのイラストは Microsoft Fluent Emoji（MIT License）、写真は Wikimedia Commons の自由ライセンスの画像です。写真の作者とライセンスは、ずかんの写真の下に表示します（一覧は GitHub の CREDITS.md）。</div>
+
     <div class="section-title">メンテナンス</div>
     <button class="btn btn-sub" id="btnRepair">🛠 初期設定（シートの修復）</button>
     <div class="note" id="settingsVersion"></div>
+  </div>
+
+  <!-- 親のずかん：お手伝いを承認するたびに2こ落ちてくる（子供とはべつのくじ） -->
+  <div class="pane hidden" id="parentPaneZukan">
+    <div class="section-title">ずかん <span class="rare-count" id="pRareCount"></span></div>
+    <div class="confirm-box" id="pConfirmBox"></div>
+    <div class="rare-grid" id="pRareGrid"></div>
+    <div class="note" id="pRareNote"></div>
   </div>
 </section>
 

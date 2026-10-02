@@ -792,6 +792,7 @@ async function pressChore(c, btn) {
   try {
     const r = await api('pressChore', { choreId: c.id, childId: CHILD.id }, rid);
     toast(r.message);
+    parentCelebrate(r); // 親が代わりに記録したときは、その親のずかんの落下物
   } catch (e) {
     fail(e);
   }
@@ -932,6 +933,7 @@ async function itemAction(act, r, btn, after) {
   try {
     const res = await api(map[act], args, uuid());
     toast(res.message);
+    parentCelebrate(res); // 承認した親のずかんの落下物
   } catch (e) { fail(e); }
   after();
 }
@@ -1194,86 +1196,161 @@ function renderSim() {
   });
 }
 
-// ===================== レアずかん（落下物・確定開き・兄弟のシルエット） =====================
+// ===================== ずかん（落下物・レベル・豆知識・確定開き・家族のシルエット） =====================
+//
+// データは zukan.js（100種）。サーバーは「だれが・どのずかんIDを・いくつ持っているか」だけを返す。
+// レベル：同じものを集めた数で 1→2→3。レベル1＝絵文字、2＝イラスト（Fluent Emoji 3D）、3＝写真（Wikimedia Commons）。
+// レベルが上がるごとに、豆知識が「小学生 → 大人 → 専門家」と1つずつ読めるようになる
 
-const RARES = window.OKD_RARES || [];
-function rareTier(i) { return i < 45 ? 1 : i < 75 ? 2 : i < 90 ? 3 : 4; }
-function rareLabel(i) { const t = rareTier(i); return t === 4 ? 'SR' : 'レア ' + '★'.repeat(t) + '☆'.repeat(3 - t); }
-function rareName(i) { return (rareTier(i) === 4 ? 'SR ' : 'レア ') + (RARES[i] ? RARES[i][1] : '？'); }
+const ZK = window.OKD_ZUKAN || { levels: {}, items: [] };
+const ZK_BY_ID = {};
+ZK.items.forEach((it, i) => { ZK_BY_ID[it.id] = Object.assign({ no: i + 1 }, it); });
+const TIP_LEVELS = ['小学生レベル', '大人レベル', '専門家レベル'];
+const LEVEL_LOOKS = ['', '絵文字', 'イラスト', '写真'];
 
-/** ずかんタブの 10×10 マス。見つけていないものは「？」、兄弟だけが持っているものはシルエット */
-function renderRares() {
-  const d = CHILD.data;
-  const col = d.collection || {};
-  const sib = d.siblingFound || {};
-  const got = Object.keys(col).length;
-  const gotSr = Object.keys(col).filter((i) => Number(i) >= 90).length;
-  const shadows = Object.keys(sib).filter((i) => !col[i]).length;
-  $('rareCount').textContent = got + ' / 100（SR ' + gotSr + ' / 10）' + (shadows ? '　きょうだいだけ ' + shadows : '');
-  let html = '';
-  for (let i = 0; i < 100; i++) {
-    const n = col[i] || 0;
-    const shadow = !n && sib[i];
-    html += '<button type="button" class="rare-cell t' + rareTier(i) + (n ? ' got' : shadow ? ' shadow' : '') + '" data-r="' + i + '">' +
-      (n ? RARES[i][0] + (n > 1 ? '<small>' + n + '</small>' : '') : shadow ? '<span>' + RARES[i][0] + '</span>' : '？') + '</button>';
-  }
-  $('rareGrid').innerHTML = html;
-  $('rareGrid').querySelectorAll('.rare-cell').forEach((b) => { b.onclick = () => showRare(Number(b.dataset.r)); });
-  const r = d.dropRates || { perApproval: 5, sr: 100, rare: 1000 };
-  $('rareNote').textContent = 'お手伝いが承認されたり、ボーナス・おこづかいをうけとったりするたびに、' + r.perApproval + 'こ落ちてくるよ。' +
-    'レアは' + Math.round(100000 / r.rare) + 'こに1こ、SRは' + Math.round(100000 / r.sr) + 'こに1こ。マスをおすと、うんちくが読めるよ。';
+function zItem(id) { return ZK_BY_ID[id] || { id, tier: 1, emoji: '❔', name: '？', tips: ['', '', ''], no: 0 }; }
+function zTierLabel(id) { const t = zItem(id).tier; return t === 4 ? 'SR' : 'レア ' + '★'.repeat(t) + '☆'.repeat(3 - t); }
+function zName(id) { return (zItem(id).tier === 4 ? 'SR ' : 'レア ') + zItem(id).name; }
+/** 持っている数からレベル（0＝持っていない） */
+function zLevel(id, n) {
+  if (!n) return 0;
+  const th = ZK.levels[zItem(id).tier] || [3, 10];
+  return n >= th[1] ? 3 : n >= th[0] ? 2 : 1;
+}
+/** 次のレベルまであと何こか（レベル3なら null） */
+function zToNext(id, n) {
+  const th = ZK.levels[zItem(id).tier] || [3, 10];
+  const lv = zLevel(id, n);
+  return lv >= 3 ? null : { level: lv + 1, left: (lv <= 1 ? th[0] : th[1]) - n };
+}
+function wikiFile(file, w) { return 'https://commons.wikimedia.org/wiki/Special:FilePath/' + encodeURIComponent(file) + '?width=' + w; }
+function wikiPage(file) { return 'https://commons.wikimedia.org/wiki/File:' + encodeURIComponent(file.replace(/ /g, '_')); }
+/** レベル2のイラストのURL */
+function zIllust(it) {
+  if (it.illust && it.illust.wiki) return wikiFile(it.illust.wiki[0], 256);
+  const f = String(it.illust || '');
+  const path = f.indexOf('/') >= 0 ? f : f + '/3D/' + f.toLowerCase().replace(/ /g, '_') + '_3d.png';
+  return ZK.fluentBase + path.split('/').map(encodeURIComponent).join('/');
+}
+/** レベルに合った見た目（小＝マス用、大＝くわしく見る用） */
+function zVisual(id, lv, big) {
+  const it = zItem(id);
+  if (lv >= 3 && it.photo) return '<img class="zk-photo" loading="lazy" alt="" src="' + esc(wikiFile(it.photo[0], big ? 480 : 120)) + '">';
+  if (lv >= 2 && it.illust) return '<img class="zk-illust" loading="lazy" alt="" src="' + esc(zIllust(it)) + '">';
+  return '<span class="zk-emoji">' + it.emoji + '</span>';
+}
+
+/** いま開いているずかん（子供の画面 or 親のずかんタブ） */
+let ZUKAN_VIEW = null;
+
+/**
+ * ずかんを描く。ids … {count, confirm, grid, note} の要素ID、z … サーバーの zukan、who … 'child' | 'parent'
+ */
+function renderZukanBox(ids, z, who) {
+  ZUKAN_VIEW = z;
+  const col = z.collection || {};
+  const fam = z.familyFound || {};
+  const got = ZK.items.filter((it) => col[it.id]).length;
+  const gotSr = ZK.items.filter((it) => it.tier === 4 && col[it.id]).length;
+  const lv3 = ZK.items.filter((it) => zLevel(it.id, col[it.id]) >= 3).length;
+  const shadows = ZK.items.filter((it) => !col[it.id] && fam[it.id]).length;
+  $(ids.count).textContent = got + ' / ' + ZK.items.length + '（SR ' + gotSr + '・写真 ' + lv3 + '）' + (shadows ? '　家族だけ ' + shadows : '');
+  $(ids.grid).innerHTML = ZK.items.map((it) => {
+    const n = col[it.id] || 0;
+    const lv = zLevel(it.id, n);
+    const shadow = !n && fam[it.id];
+    return '<button type="button" class="rare-cell t' + it.tier + (n ? ' got lv' + lv : shadow ? ' shadow' : '') + '" data-r="' + it.id + '">' +
+      (n ? zVisual(it.id, lv, false) + (n > 1 ? '<small>' + n + '</small>' : '') + (lv > 1 ? '<i class="lv">' + lv + '</i>' : '')
+        : shadow ? '<span class="zk-emoji">' + it.emoji + '</span>' : '？') + '</button>';
+  }).join('');
+  $(ids.grid).querySelectorAll('.rare-cell').forEach((b) => { b.onclick = () => showRare(b.dataset.r); });
+  const r = z.rates || { child: 5, parent: 2, sr: 1000, rare: 10000 };
+  $(ids.note).textContent = (who === 'parent'
+    ? 'お手伝いを承認するたびに、' + r.parent + 'こ落ちてくるよ（子供とはべつのくじ）。'
+    : 'お手伝いが承認されたり、ボーナス・おこづかいをうけとったりするたびに、' + r.child + 'こ落ちてくるよ。') +
+    'レアは' + Math.round(100000 / r.rare) + 'こに1こ、SRは' + Math.round(100000 / r.sr) + 'こに1こ。同じものを集めるとレベルアップして、絵文字→イラスト→写真に変わり、豆知識がふえるよ。';
 
   // 確定開き（月に1回。つぎに承認されたとき、まだ持っていないレアが1こ落ちてくる。SRは対象外）
-  const cf = d.confirm || {};
-  $('confirmBox').innerHTML = '<div class="confirm-head">🔓 確定開き <small>月に1回</small></div>' +
+  const cf = z.confirm || {};
+  $(ids.confirm).innerHTML = '<div class="confirm-head">🔓 確定開き <small>月に1回</small></div>' +
     (cf.armed ? '<div class="confirm-msg on">じゅんびOK！つぎに承認されたとき、<b>まだ持っていないレア</b>がかならず落ちてくるよ。なにが出るかはおたのしみ！</div>'
       : cf.allRares ? '<div class="confirm-msg">レアはぜんぶそろったよ！SRはじぶんの運でさがそう。</div>'
       : cf.usedThisMonth ? '<div class="confirm-msg">今月はもう使ったよ。来月1日にまた使えるよ。</div>'
       : '<div class="confirm-msg">つぎに承認されたとき、まだ持っていないレアが1こかならず落ちてくるよ（SRは出ないよ）。</div>' +
-        '<button class="btn btn-main" id="btnUseConfirm">確定開きを使う</button>');
-  if ($('btnUseConfirm')) { $('btnUseConfirm').onclick = useConfirm; applyCool('confirm', $('btnUseConfirm')); }
+        '<button class="btn btn-main" data-confirm="1">確定開きを使う</button>');
+  const b = $(ids.confirm).querySelector('[data-confirm]');
+  if (b) { b.onclick = () => useConfirm(who, b); applyCool('confirm_' + who, b); }
 }
 
-async function useConfirm() {
-  if (isCooling('confirm')) return;
+/** 子供の画面のずかんタブ */
+function renderRares() {
+  renderZukanBox({ count: 'rareCount', confirm: 'confirmBox', grid: 'rareGrid', note: 'rareNote' }, CHILD.data.zukan || {}, 'child');
+}
+
+/** 親のずかんタブ */
+async function refreshParentZukan() {
+  try {
+    const z = await api('zukan');
+    renderZukanBox({ count: 'pRareCount', confirm: 'pConfirmBox', grid: 'pRareGrid', note: 'pRareNote' }, z, 'parent');
+  } catch (e) { fail(e); }
+}
+
+/** 確定開き。who＝'child'（子供の画面。親が開いた子の画面ならその子）／'parent'（親が自分の分） */
+async function useConfirm(who, btn) {
+  const key = 'confirm_' + who;
+  if (isCooling(key)) return;
   const ok = await dialog('確定開きを使う？',
     '<p style="text-align:center;font-size:40px;margin:4px 0">🔓</p>' +
     '<p>つぎに承認されたとき、<b>まだ持っていないレア</b>が1こ、かならず落ちてくるよ。</p>' +
     '<div class="note">使えるのは月に1回。なにが出るかは、落ちてくるまでひみつ。SRは出ないよ。</div>', '使う');
   if (!ok) return;
-  cool('confirm', $('btnUseConfirm'), 5000);
-  try { toast((await api('useConfirm', { childId: CHILD.id }, uuid())).message); } catch (e) { fail(e); }
-  refreshChild();
+  cool(key, btn, 5000);
+  try { toast((await api('useConfirm', who === 'parent' ? {} : { childId: CHILD.id }, uuid())).message); } catch (e) { fail(e); }
+  if (who === 'parent') refreshParentZukan(); else refreshChild();
 }
 
-/** マスをおしたとき。持っていない→？、兄弟だけ→シルエットとだれが持っているか（名前とうんちくはひみつ） */
-function showRare(i) {
-  const n = (CHILD.data.collection || {})[i] || 0;
-  const sib = (CHILD.data.siblingFound || {})[i];
-  if (!n && sib) {
-    return dialog('？？？', '<div class="rare-detail t' + rareTier(i) + '"><div class="rare-big rare-shadow">' + RARES[i][0] + '</div>' +
-      '<div class="rare-lv">' + rareLabel(i) + '</div>' +
-      '<p class="rare-trivia"><b>' + esc(sib.join('・')) + '</b> が見つけているよ！<br>きみはまだ持っていないよ。見つけると、名前とうんちくが読めるようになるよ。</p></div>',
+/** マスをおしたとき。持っている→レベルに合った絵・豆知識／家族だけ→シルエット／だれも→？ */
+function showRare(id) {
+  const z = ZUKAN_VIEW || {};
+  const n = (z.collection || {})[id] || 0;
+  const fam = (z.familyFound || {})[id];
+  const it = zItem(id);
+  if (!n && fam) {
+    return dialog('？？？', '<div class="rare-detail t' + it.tier + '"><div class="rare-big rare-shadow">' + it.emoji + '</div>' +
+      '<div class="rare-lv">' + zTierLabel(id) + '</div>' +
+      '<p class="rare-trivia"><b>' + esc(fam.join('・')) + '</b> が見つけているよ！<br>きみはまだ持っていないよ。見つけると、名前と豆知識が読めるようになるよ。</p></div>',
       'とじる', true);
   }
   if (!n) {
-    return dialog('？？？', '<p style="text-align:center;font-size:48px;margin:6px 0">？</p><p style="text-align:center">' + rareLabel(i) +
-      '<br>まだ見つけていないよ。お手伝いが承認されると、たまに落ちてくるよ。</p>', 'とじる', true);
+    return dialog('？？？', '<p style="text-align:center;font-size:48px;margin:6px 0">？</p><p style="text-align:center">' + zTierLabel(id) +
+      '<br>まだ見つけていないよ。承認されると、たまに落ちてくるよ。</p>', 'とじる', true);
   }
-  const r = RARES[i];
-  return dialog(rareName(i), '<div class="rare-detail t' + rareTier(i) + '"><div class="rare-big">' + r[0] + '</div>' +
-    '<div class="rare-lv">' + rareLabel(i) + '　もっている数 ×' + n + '</div>' +
-    '<p class="rare-trivia">' + esc(r[2]) + '</p></div>', 'とじる', true);
+  const lv = zLevel(id, n);
+  const next = zToNext(id, n);
+  const credit = lv >= 3 && it.photo
+    ? '写真：' + esc(it.photo[2]) + '（' + esc(it.photo[1]) + '）<a href="' + esc(wikiPage(it.photo[0])) + '" target="_blank" rel="noopener">Wikimedia Commons</a>'
+    : lv >= 2 && it.illust && it.illust.wiki
+      ? 'イラスト：' + esc(it.illust.wiki[2]) + '（' + esc(it.illust.wiki[1]) + '）<a href="' + esc(wikiPage(it.illust.wiki[0])) + '" target="_blank" rel="noopener">Wikimedia Commons</a>'
+      : lv >= 2 ? 'イラスト：Microsoft Fluent Emoji（MIT License）' : '';
+  const tips = it.tips.map((t, i) => i < lv
+    ? '<div class="tip"><div class="tip-head">' + TIP_LEVELS[i] + '</div>' + esc(t) + '</div>'
+    : '<div class="tip locked"><div class="tip-head">🔒 ' + TIP_LEVELS[i] + '</div>レベル' + (i + 1) + 'になると読めるよ</div>').join('');
+  return dialog('No.' + it.no + ' ' + zName(id), '<div class="rare-detail t' + it.tier + ' lv' + lv + '"><div class="rare-big">' + zVisual(id, lv, true) + '</div>' +
+    (credit ? '<div class="zk-credit">' + credit + '</div>' : '') +
+    '<div class="rare-lv">' + zTierLabel(id) + '　レベル' + lv + '（' + LEVEL_LOOKS[lv] + '）　もっている数 ×' + n + '</div>' +
+    (next ? '<div class="zk-next">あと <b>' + next.left + 'こ</b> でレベル' + next.level + '（' + LEVEL_LOOKS[next.level] + '・' + TIP_LEVELS[next.level - 1] + 'の豆知識）</div>'
+      : '<div class="zk-next">さいこうレベル！</div>') +
+    tips + '</div>', 'とじる', true);
 }
 
-/** おいわい画面の上でうんちくを見る（とじたら、おいわいにもどる） */
-function showRareOver(i) {
+/** おいわい画面の上で豆知識を見る（とじたら、おいわいにもどる） */
+function showRareOver(id) {
   $('celebrate').classList.add('hidden');
-  showRare(i).then(() => $('celebrate').classList.remove('hidden'));
+  showRare(id).then(() => $('celebrate').classList.remove('hidden'));
 }
 
 /**
- * 承認されたぶんの落下物。はずれは色つきの四角、レア・SRは絵文字（SRはキラキラ）。
+ * 落下物。はずれは色つきの四角、レア・SRは絵文字（SRはキラキラ）。
  * レアがあるときは、落ちている途中で全体を一時停止 → 暗転 → レアだけ点滅 → 再開（画面をタップで飛ばせる）。
  * 演出がおわったら resolve する（そのあとでおいわいカードを出す）
  */
@@ -1292,12 +1369,13 @@ function dropRain(normal, rares) {
     box.appendChild(p);
   }
   // レアは横にならべて同時に落とす（止まったとき、重ならないように）
-  rares.forEach((r, k) => {
+  const shown = rares.slice(0, 8);
+  shown.forEach((id, k) => {
     const p = document.createElement('b');
-    p.className = rareTier(r) === 4 ? 'drop-sr' : 'drop-rare';
-    p.style.left = (rares.length === 1 ? 44 : 12 + (76 / (rares.length - 1)) * k) + '%';
+    p.className = zItem(id).tier === 4 ? 'drop-sr' : 'drop-rare';
+    p.style.left = (shown.length === 1 ? 44 : 8 + (80 / (shown.length - 1)) * k) + '%';
     p.style.animationDuration = '3s';
-    p.innerHTML = '<span>' + (RARES[r] ? RARES[r][0] : '⭐') + '</span>';
+    p.innerHTML = '<span>' + zItem(id).emoji + '</span>';
     box.appendChild(p);
   });
   document.body.appendChild(box);
@@ -1305,7 +1383,7 @@ function dropRain(normal, rares) {
     setTimeout(() => box.remove(), 3500);
     return Promise.resolve();
   }
-  const sr = rares.some((r) => rareTier(r) === 4);
+  const sr = rares.some((id) => zItem(id).tier === 4);
   return new Promise((resolve) => {
     let ended = false;
     let timer = null;
@@ -1354,7 +1432,39 @@ function confetti(n) {
 }
 
 /**
- * おいわい：前に見たときから承認されたお手伝い・うけとったボーナス・おこづかいがあれば、
+ * 出たレア・SRの行（はじめてなら NEW!、確定開きなら 🔓、レベルが上がったら レベルアップ）。
+ * items … [{id, conf}]、col … 出たあとのずかん（持っている数）
+ */
+function rareLines(items, col) {
+  const inFresh = {};
+  items.forEach(({ id }) => { inFresh[id] = (inFresh[id] || 0) + 1; });
+  const done = {};
+  return '<div class="cel-rares">' + items.map(({ id, conf }) => {
+    const after = col[id] || 0;
+    const before = after - inFresh[id];
+    const first = !done[id];
+    done[id] = true;
+    const isNew = first && before === 0;
+    const up = first && zLevel(id, after) > Math.max(zLevel(id, before), 1) ? zLevel(id, after) : 0;
+    return '<button type="button" class="cel-rare t' + zItem(id).tier + '" data-r="' + id + '">' + zItem(id).emoji +
+      ' <b>' + esc(zName(id)) + '</b> が出たよ！' + (isNew ? '<span class="new">NEW!</span>' : '') +
+      (conf ? '<span class="conf">🔓確定開き</span>' : '') +
+      (up ? '<span class="lvup">レベルアップ！ レベル' + up + '（' + LEVEL_LOOKS[up] + '）</span>' : '') + '</button>';
+  }).join('') + '<div class="note">おすと、豆知識が読めるよ</div></div>';
+}
+
+/** おいわいカードを出す（rares があれば、その行をおすと豆知識） */
+function showCelebrate(icon, title, bodyHtml, z) {
+  $('celebrateIcon').textContent = icon;
+  $('celebrateTitle').textContent = title;
+  $('celebrateBody').innerHTML = bodyHtml;
+  ZUKAN_VIEW = z;
+  $('celebrateBody').querySelectorAll('.cel-rare').forEach((b) => { b.onclick = () => showRareOver(b.dataset.r); });
+  $('celebrate').classList.remove('hidden');
+}
+
+/**
+ * 子供のおいわい：前に見たときから承認されたお手伝い・うけとったボーナス・おこづかいがあれば、
  * 1件につき5この落下物（レアは演出つき）のあとで、ありがとう・出たレアをカードで見せる。
  * 見た記録は端末に覚えておく。はじめて開いた端末では、今までの分はおいわいしない
  */
@@ -1381,33 +1491,32 @@ function checkCelebrations() {
     (r.thanks ? '<div class="thanks">💌 ' + esc(r.thanks) + (r.approvedBy ? '<small>― ' + esc(r.approvedBy) + '</small>' : '') + '</div>' : '') +
     '</div>').join('') + '</div>'];
 
-  // 落下物：1件につき5こ。レア・SRが出たら知らせる（はじめてなら NEW!、確定開きなら 🔓）
-  const items = [].concat.apply([], fresh.map((r) => (r.drops || []).map((i, k) => ({ i, conf: !!r.confirmed && k === 0 }))));
-  const rares = items.map((x) => x.i);
+  const z = d.zukan || {};
+  const items = [].concat.apply([], fresh.map((r) => (r.drops || []).map((id, k) => ({ id, conf: !!r.confirmed && k === 0 }))));
+  const rares = items.map((x) => x.id);
   if (rares.length) {
-    const col = d.collection || {};
-    const inFresh = {};
-    rares.forEach((i) => { inFresh[i] = (inFresh[i] || 0) + 1; });
-    const shownNew = {};
-    parts.unshift('<div class="cel-rares">' + items.map(({ i, conf }) => {
-      const isNew = (col[i] || 0) - inFresh[i] === 0 && !shownNew[i];
-      shownNew[i] = true;
-      return '<button type="button" class="cel-rare t' + rareTier(i) + '" data-r="' + i + '">' + RARES[i][0] +
-        ' <b>' + esc(rareName(i)) + '</b> が出たよ！' + (isNew ? '<span class="new">NEW!</span>' : '') +
-        (conf ? '<span class="conf">🔓確定開き</span>' : '') + '</button>';
-    }).join('') + '<div class="note">おすと、うんちくが読めるよ</div></div>');
-    const sr = rares.some((i) => rareTier(i) === 4);
+    parts.unshift(rareLines(items, z.collection || {}));
+    const sr = rares.some((id) => zItem(id).tier === 4);
     icon = sr ? '🌟' : '✨';
     title = sr ? 'SRが出た！！' : 'レアが出た！';
     if ($('childPaneZukan').classList.contains('hidden')) $('zukanDot').classList.remove('hidden');
   }
-  $('celebrateIcon').textContent = icon;
-  $('celebrateTitle').textContent = title;
-  $('celebrateBody').innerHTML = parts.join('');
-  $('celebrateBody').querySelectorAll('.cel-rare').forEach((b) => { b.onclick = () => showRareOver(Number(b.dataset.r)); });
-  // 落下物（はずれ＋レア）。レアがあれば演出がおわってからカードを出す
-  const total = fresh.length * ((d.dropRates || {}).perApproval || 5);
-  dropRain(total - rares.length, rares).then(() => $('celebrate').classList.remove('hidden'));
+  const total = fresh.length * ((z.rates || {}).child || 5);
+  dropRain(total - rares.length, rares).then(() => showCelebrate(icon, title, parts.join(''), z));
+}
+
+/** 親のおいわい：承認・代わりに記録したときに、その親に落ちたもの（2こ）。レアが出たときだけカードを出す */
+function parentCelebrate(res) {
+  const p = res && res.parentDrops;
+  if (!p) return;
+  const items = p.ids.map((id, k) => ({ id, conf: !!p.confirmed && k === 0 }));
+  dropRain(p.count - p.ids.length, p.ids).then(() => {
+    if (!p.ids.length) return;
+    const sr = p.ids.some((id) => zItem(id).tier === 4);
+    showCelebrate(sr ? '🌟' : '✨', sr ? 'SRが出た！！' : 'レアが出た！', rareLines(items, res.myCollection || {}),
+      { collection: res.myCollection || {}, familyFound: {} });
+    $('pZukanDot').classList.toggle('hidden', !$('parentPaneZukan').classList.contains('hidden'));
+  });
 }
 
 // ===================== 親画面 =====================
@@ -1426,10 +1535,12 @@ function parentTab(tab) {
   $('parentPanePending').classList.toggle('hidden', tab !== 'pending');
   $('parentPaneUsers').classList.toggle('hidden', tab !== 'users');
   $('parentPaneSettings').classList.toggle('hidden', tab !== 'settings');
+  $('parentPaneZukan').classList.toggle('hidden', tab !== 'zukan');
   // タブを開くたびに最新を取り直す
   if (tab === 'pending') refreshPending();
   if (tab === 'users') refreshUsers();
   if (tab === 'settings') refreshSettings();
+  if (tab === 'zukan') { $('pZukanDot').classList.add('hidden'); refreshParentZukan(); }
 }
 
 async function refreshPending() {

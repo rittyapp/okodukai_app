@@ -310,6 +310,26 @@ dialog h3 { margin: 0 0 8px; font-size: 17px; }
 .rare-lv { font-size: 13px; color: var(--orange); font-weight: bold; }
 .rare-detail.t4 .rare-lv { color: #8a4fd6; }
 .rare-trivia { text-align: left; background: #f7fbf8; border-radius: 12px; padding: 10px 12px; font-size: 15px; line-height: 1.7; }
+/* レベル：1＝絵文字、2＝イラスト、3＝写真 */
+.rare-cell { overflow: hidden; }
+.rare-cell .zk-illust { width: 86%; height: 86%; object-fit: contain; display: block; margin: 7%; }
+.rare-cell .zk-photo { width: 100%; height: 100%; object-fit: cover; display: block; }
+.rare-cell.lv3 { box-shadow: 0 0 0 2px #ffb43d inset; }
+.rare-cell .lv { position: absolute; left: 1px; top: 1px; font-style: normal; font-size: 9px; font-weight: bold; color: #fff; background: rgba(224,123,0,.85); border-radius: 4px; padding: 0 3px; line-height: 1.4; }
+.rare-cell small { background: rgba(255,255,255,.85); border-radius: 4px; padding: 0 2px; }
+.rare-big .zk-illust { width: 160px; height: 160px; object-fit: contain; }
+.rare-big .zk-photo { width: 100%; max-height: 260px; object-fit: cover; border-radius: 12px; }
+.rare-big .zk-emoji { font-size: 72px; }
+.zk-credit { font-size: 10px; color: var(--sub); margin: 2px 0 6px; word-break: break-all; }
+.zk-credit a { color: var(--sub); }
+.zk-next { font-size: 12px; color: #555; margin: 4px 0 8px; }
+.tip { text-align: left; background: #f7fbf8; border-radius: 12px; padding: 8px 12px; font-size: 14px; line-height: 1.7; margin-top: 6px; }
+.tip-head { font-size: 11px; font-weight: bold; color: var(--main-dark); }
+.tip.locked { background: #f3f1ee; color: #aaa; font-size: 12px; }
+.tip.locked .tip-head { color: #aaa; }
+.cel-rare .lvup { background: #e07b00; color: #fff; font-size: 11px; font-weight: bold; border-radius: 8px; padding: 1px 6px; margin-left: 6px; }
+#screenParent .tabbar button { font-size: 13px; padding-left: 2px; padding-right: 2px; position: relative; white-space: nowrap; }
+
 .confirm-box { background: #fff; border: 2px dashed #b9a8ef; border-radius: 14px; padding: 10px 12px; margin-bottom: 8px; }
 .confirm-head { font-weight: bold; color: #7b5bd6; }
 .confirm-head small { font-weight: normal; color: var(--sub); margin-left: 6px; }

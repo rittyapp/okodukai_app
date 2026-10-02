@@ -18,17 +18,21 @@
  *   HISTORY_LIMIT       … りれきに表示する件数（それより古いものは表示しない）。設定タブから変更。既定 30
  *   BONUS_SAME_DAY_ENABLED / BONUS_STREAK_ENABLED … 「1日3回目」「3日連続」ボーナスの有効/無効（'false' で無効）
  *   ALLOWANCE_ENABLED / ALLOWANCE_AMOUNT / ALLOWANCE_DAY / ALLOWANCE_START … 定期おこづかい（金額・毎月の支給日・開始年月 yyyy-MM）
+ *   INTEREST_YEN_RATE / INTEREST_YEN_START … りそく（月の%。0か空＝なし）と付け始めた月（yyyy-MM）。設定タブから変更
+ *   DROP_TEST_BOOST     … レア落下物の確率を何倍にするか（お試し用。ふだんは空＝1倍）
+ *   CONFIRM_ARMED_<子供ID> / CONFIRM_USED_<子供ID> / CONFIRMED_<子供ID> … 確定開きの状態。自動で入る（手で触らない）
  *   sess_<token>        … ログインセッション。自動で作成・削除される（手で触らない）。
  *
  * ── シート ──
  *   Users          … UserId / Email / Name / Role(parent|child) / Active / Pin(4桁・書式なしテキスト)（マスター以外の親と子供）
- *   ChoreMaster    … ChoreId / Name / BaseAmount / Active
- *   Ledger         … 全ての記録（お金の出入り・申請・ボーナス）。残高は Status=approved の Amount 合計
+ *   ChoreMaster    … ChoreId / Name / BaseAmount / Active / DailyMax（家族で1日○回まで。空＝上限なし）
+ *   Ledger         … 全ての記録（お金の出入り・申請・ボーナス・りそく）。残高は Status=approved の Amount 合計。
+ *                    Thanks＝親が承認のときに送った「ありがとう」
  *   PinDeviceState … PIN入力の失敗回数・ロック状態（端末＝ブラウザ単位）。TotalFails＝これまでの失敗の合計、Hidden＝親が一覧から隠した
  */
 
 // ===================== 設定値 =====================
-const SERVER_VERSION = '3.2.0';
+const SERVER_VERSION = '3.3.0';
 
 // 公開してよい情報のみ。クライアントIDはブラウザに渡る前提の値で、秘密ではない。
 const DEFAULT_OAUTH_CLIENT_ID = '337708567191-tpqbqqinfgm5bpje56ccdj2gmkphdngi.apps.googleusercontent.com';
@@ -42,17 +46,35 @@ const SHEET_DEVICES = 'PinDeviceState';
 
 const HEADERS = {
   Users: ['UserId', 'Email', 'Name', 'Role', 'Active', 'Pin'],
-  ChoreMaster: ['ChoreId', 'Name', 'BaseAmount', 'Active'],
+  // DailyMax … 家族（兄弟みんな）で1日○回まで（空＝上限なし）
+  ChoreMaster: ['ChoreId', 'Name', 'BaseAmount', 'Active', 'DailyMax'],
   // RequestedById … 押した（記録した）人のUserId。「押した本人なら取り消せる」の判定に使う。
+  // Thanks … 親が承認のときに送った「ありがとう」スタンプ・ひとこと
   Ledger: ['Id', 'Timestamp', 'ChildId', 'Type', 'ChoreId', 'ChoreName', 'Status', 'Amount', 'Memo',
-    'RequestedBy', 'ApprovedBy', 'ApprovedAt', 'Hidden', 'RequestedById'],
+    'RequestedBy', 'ApprovedBy', 'ApprovedAt', 'Hidden', 'RequestedById', 'Thanks'],
   PinDeviceState: ['DeviceId', 'FailCount', 'LockUntil', 'HardLocked', 'UpdatedAt', 'TotalFails', 'Hidden']
 };
 
+// [名前, 金額, 家族で1日○回まで]
 const DEFAULT_CHORES = [
-  ['ゴミ捨て', 30], ['お風呂掃除', 30], ['料理', 100], ['食器洗い', 30], ['洗濯物たたみ', 30],
-  ['掃除機がけ', 30], ['布団干し', 30], ['玄関掃除', 30], ['ペットのお世話', 30], ['草むしり', 30]
+  ['ゴミ捨て', 30, 1], ['お風呂掃除', 30, 1], ['料理', 100, 1], ['食器洗い', 30, 2], ['洗濯物たたみ', 30, 1],
+  ['掃除機がけ', 30, 1], ['布団干し', 30, 1], ['玄関掃除', 30, 1], ['ペットのお世話', 30, 2], ['草むしり', 30, 1]
 ];
+
+// 承認のときに親が「ありがとう」をえらばなかったら、この中からランダムで送る（画面のスタンプも同じ）
+const THANKS_DEFAULTS = ['ありがとう！', 'たすかったよ！', 'さすが！', 'ピカピカだね✨', 'いつもえらいね', 'またおねがいね'];
+
+// りそく（月末の残高に月○%。親が設定タブで決める）
+const INTEREST_MAX_RATE = 20;
+const INTEREST_PREFIX = 'interest:'; // りそく行の ChoreId（interest:yen:yyyy-MM）。この行があれば「受取済み」
+
+// レア落下物（ガチャ）。承認されたお手伝い・うけとったボーナス・おこづかい1件につき DROPS_PER_APPROVAL こ落ちてくる。
+// 1こごとに SR は 1/1000、レアは 1/100（DROP_TEST_BOOST プロパティで何倍にもできる。お試し用）。
+// どれが落ちるかは記録のIDから決まる（読みなおしても、まとめて承認しても変わらない＝ズルできない）。
+// 画面側の図鑑（rares.js）は 0〜99 番：0〜44 レア★1（出やすさ3）/ 45〜74 レア★2（出やすさ2）/ 75〜89 レア★3（出やすさ1）/ 90〜99 SR
+const DROPS_PER_APPROVAL = 5;
+const DROP_SR_PER_100K = 100;     // 1/1000
+const DROP_RARE_PER_100K = 1000;  // 1/100
 
 // お手伝いの回数制限（子供が押すとき。親が代わりに押す場合は制限しない）
 const DAILY_LIMIT = 3;
@@ -94,6 +116,7 @@ const API = {
   dashboard: apiDashboard_, dashboardExtras: apiDashboardExtras_, dayEntries: apiDayEntries_, pressChore: apiPressChore_, requestUnlock: apiRequestUnlock_,
   addUsage: apiAddUsage_, cancelEntry: apiCancelEntry_, confirmBonus: apiConfirmBonus_,
   receiveAllowance: apiReceiveAllowance_, changeMyPin: apiChangeMyPin_,
+  receiveInterest: apiReceiveInterest_, useConfirm: apiUseConfirm_,
   // 親のみ
   pending: apiPending_, approve: apiApprove_, reject: apiReject_, editEntry: apiEditEntry_,
   revertEntry: apiRevertEntry_, hideEntry: apiHideEntry_, addAdjustment: apiAddAdjustment_,
@@ -107,7 +130,7 @@ const WRITE_ACTIONS = {
   googleLogin: 1, pinLogin: 1, pressChore: 1, requestUnlock: 1, addUsage: 1, cancelEntry: 1, confirmBonus: 1,
   approve: 1, reject: 1, editEntry: 1, revertEntry: 1, hideEntry: 1, addAdjustment: 1, saveChore: 1,
   deleteChore: 1, upsertUser: 1, deactivateUser: 1, setAppName: 1, unlockDevice: 1, repair: 1,
-  receiveAllowance: 1, changeMyPin: 1, saveSettings: 1, hideDevice: 1
+  receiveAllowance: 1, changeMyPin: 1, saveSettings: 1, hideDevice: 1, receiveInterest: 1, useConfirm: 1
 };
 
 function doPost(e) {
@@ -258,7 +281,7 @@ function repairSheets_() {
   const chores = readTable_(SHEET_CHORES);
   if (!chores.rows.length) {
     DEFAULT_CHORES.forEach(function (c, i) {
-      appendRow_(SHEET_CHORES, { ChoreId: 'c' + pad2_(i + 1), Name: c[0], BaseAmount: c[1], Active: true });
+      appendRow_(SHEET_CHORES, { ChoreId: 'c' + pad2_(i + 1), Name: c[0], BaseAmount: c[1], Active: true, DailyMax: c[2] || '' });
     });
     report.push('お手伝いの初期データを登録');
   } else {
@@ -700,10 +723,31 @@ function targetChild_(me, childId) {
 
 // ===================== お手伝いマスタ =====================
 
+/** dailyMax … 家族（兄弟みんな）で1日に何回までか（0＝上限なし） */
 function listChores_() {
   return readTable_(SHEET_CHORES).rows
     .filter(function (c) { return c.ChoreId && isActive_(c); })
-    .map(function (c) { return { id: String(c.ChoreId), name: String(c.Name), amount: Number(c.BaseAmount) || 0 }; });
+    .map(function (c) {
+      return { id: String(c.ChoreId), name: String(c.Name), amount: Number(c.BaseAmount) || 0,
+        dailyMax: Math.max(0, Math.round(Number(c.DailyMax) || 0)) };
+    });
+}
+
+/** 今日、家族みんなでそのお手伝いを何回したか・だれがしたか（申請中も数える） */
+function choreTodayByFamily_() {
+  const today = todayStr_();
+  const names = {};
+  allUsers_().forEach(function (u) { names[u.UserId] = u.Name; });
+  const out = {};
+  ledgerRows_().forEach(function (r) {
+    if (!isCountedChore_(r) || dayOf_(r.Timestamp) !== today) return;
+    const id = String(r.ChoreId);
+    out[id] = out[id] || { count: 0, by: [] };
+    out[id].count++;
+    const n = names[String(r.ChildId)] || '';
+    if (n && out[id].by.indexOf(n) < 0) out[id].by.push(n);
+  });
+  return out;
 }
 function nextChoreId_() {
   let max = 0;
@@ -720,12 +764,15 @@ function apiSaveChore_(ctx) {
   const amount = Number(ctx.args.amount);
   if (!name) throw new Error('お手伝いの名前を入力してください。');
   if (!isFinite(amount) || amount < 0) throw new Error('金額は0以上の数字にしてください。');
+  const dailyMax = Math.round(Number(ctx.args.dailyMax || 0));
+  if (!(dailyMax >= 0 && dailyMax <= 20)) throw new Error('家族で1日の回数は0〜20にしてください（0＝上限なし）。');
+  const patch = { Name: name, BaseAmount: amount, Active: true, DailyMax: dailyMax || '' };
   if (ctx.args.choreId) {
     const row = readTable_(SHEET_CHORES).rows.filter(function (c) { return String(c.ChoreId) === String(ctx.args.choreId); })[0];
     if (!row) throw new Error('お手伝いが見つかりません。');
-    updateRow_(SHEET_CHORES, row._row, { Name: name, BaseAmount: amount, Active: true });
+    updateRow_(SHEET_CHORES, row._row, patch);
   } else {
-    appendRow_(SHEET_CHORES, { ChoreId: nextChoreId_(), Name: name, BaseAmount: amount, Active: true });
+    appendRow_(SHEET_CHORES, Object.assign({ ChoreId: nextChoreId_() }, patch));
   }
   return { message: '保存しました。' };
 }
@@ -771,7 +818,8 @@ function isCountedChore_(r) { return r.Type === 'chore' && (r.Status === 'approv
 
 function labelOf_(r) {
   if (r.ChoreName) return String(r.ChoreName);
-  return { usage: 'つかった', adjustment: '残高調整', unlock_request: '上限追加のおねがい', bonus: 'ボーナス', allowance: 'おこづかい' }[r.Type] || String(r.Type);
+  return { usage: 'つかった', adjustment: '残高調整', unlock_request: '上限追加のおねがい', bonus: 'ボーナス', allowance: 'おこづかい',
+    interest: 'りそく' }[r.Type] || String(r.Type);
 }
 
 /**
@@ -780,7 +828,7 @@ function labelOf_(r) {
  */
 function canCancel_(r, viewer) {
   if (viewer.Role !== 'child' || String(r.ChildId) !== viewer.UserId) return false;
-  if (r.Type === 'bonus' || r.Type === 'adjustment' || r.Type === 'allowance') return false;
+  if (r.Type === 'bonus' || r.Type === 'adjustment' || r.Type === 'allowance' || r.Type === 'interest') return false;
   const selfApprovedUsage = r.Type === 'usage' && r.Status === 'approved' && String(r.ApprovedBy) === String(viewer.Name);
   if (r.Status !== 'pending' && !selfApprovedUsage) return false;
   // 押した本人だけ取り消せる（旧データは RequestedById が無いので名前で判定）
@@ -801,6 +849,10 @@ function outRow_(r, viewer, childNames) {
     id: String(r.Id), ts: toIso_(r.Timestamp), day: dayOf_(r.Timestamp), type: r.Type,
     name: labelOf_(r), status: r.Status, amount: Number(r.Amount) || 0, memo: String(r.Memo || ''),
     requestedBy: String(r.RequestedBy || ''), approvedBy: String(r.ApprovedBy || ''),
+    thanks: String(r.Thanks || ''),
+    // この記録で落ちたレア・SR（はずれはふくめない）と、1こ目が確定開きで出たものか
+    drops: dropsOf_(r, dropBoost_()),
+    confirmed: dropsFor_(r) && confirmedItem_(r) !== null,
     canCancel: canCancel_(r, viewer),
     // 親のボタン：申請中＝承認・却下・編集／承認済み＝却下・編集／却下・取消＝承認（取消は除く）・非表示
     // 子供：自分が押した申請中のお手伝いの日付だけ
@@ -812,6 +864,215 @@ function outRow_(r, viewer, childNames) {
   };
   if (childNames) o.childName = childNames[String(r.ChildId)] || String(r.ChildId);
   return o;
+}
+
+// ===================== レア落下物（ガチャ） =====================
+
+/** 文字列から 0〜2^32-1 の数を作る（FNV-1a）。同じ文字列なら必ず同じ数 */
+function hash32_(s) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+  return h >>> 0;
+}
+function dropBoost_() { const b = Number(props_().getProperty('DROP_TEST_BOOST') || 1); return b >= 1 && b <= 100 ? b : 1; }
+/** 落下物が出る記録：承認されたお手伝い・うけとったボーナス・おこづかい */
+function dropsFor_(r) { return r.Status === 'approved' && (r.Type === 'chore' || r.Type === 'bonus' || r.Type === 'allowance'); }
+/** その記録で落ちたレア・SRの番号（はずれはふくめない）。確定開きの記録は1こ目が確定のレアになる */
+function dropsOf_(r, boost) {
+  if (!dropsFor_(r)) return [];
+  const out = [];
+  const fixed = confirmedItem_(r);
+  if (fixed !== null) out.push(fixed);
+  for (let k = fixed !== null ? 1 : 0; k < DROPS_PER_APPROVAL; k++) {
+    const key = String(r.Id) + ':' + k;
+    const roll = hash32_(key) % 100000;
+    const pick = hash32_(key + ':item');
+    if (roll < DROP_SR_PER_100K * boost) out.push(90 + pick % 10);
+    else if (roll < (DROP_SR_PER_100K + DROP_RARE_PER_100K) * boost) {
+      const w = pick % 210; // ★1:45種×3 / ★2:30種×2 / ★3:15種×1
+      out.push(w < 135 ? Math.floor(w / 3) : w < 195 ? 45 + Math.floor((w - 135) / 2) : 75 + (w - 195));
+    }
+  }
+  return out;
+}
+/** 図鑑：番号 → 持っている数 */
+function collectionOf_(rows) {
+  const boost = dropBoost_();
+  const c = {};
+  rows.forEach(function (r) { dropsOf_(r, boost).forEach(function (i) { c[i] = (c[i] || 0) + 1; }); });
+  return c;
+}
+/** 兄弟（ほかの有効な子供）が見つけたもの：番号 → 名前の一覧（図鑑でシルエット表示に使う） */
+function siblingsFound_(childId) {
+  const boost = dropBoost_();
+  const names = {};
+  listUsers_().forEach(function (u) { if (u.Role === 'child' && isActive_(u) && u.UserId !== childId) names[u.UserId] = u.Name; });
+  const out = {};
+  ledgerRows_().forEach(function (r) {
+    const n = names[String(r.ChildId)];
+    if (!n) return;
+    dropsOf_(r, boost).forEach(function (i) {
+      out[i] = out[i] || [];
+      if (out[i].indexOf(n) < 0) out[i].push(n);
+    });
+  });
+  return out;
+}
+
+// ---------- 確定開き（月に1回。次に承認された記録の1こ目が「まだ持っていないレア」になる。SRは対象外） ----------
+// CONFIRM_ARMED_<子供ID> … 使って待っている状態 {armedAt: ISO}
+// CONFIRM_USED_<子供ID>  … 最後に使った月（yyyy-MM）。同じ月は1回だけ
+// CONFIRMED_<子供ID>     … 決まった確定 [{row: 記録ID, item: 番号, armedAt}]（あとで持ち物が増えても結果が変わらないように保存）
+
+/** 確定の一覧（1回の通信の間だけ覚えておく。TABLE_CACHE_ に入れると通信ごとに読み直される） */
+function confirmedMap_() {
+  if (!TABLE_CACHE_.__confirmed) {
+    const m = {};
+    const all = props_().getProperties();
+    Object.keys(all).forEach(function (k) {
+      if (k.indexOf('CONFIRMED_') !== 0) return;
+      try { JSON.parse(all[k]).forEach(function (e) { m[e.row] = e.item; }); } catch (e) { /* 壊れていたら無視 */ }
+    });
+    TABLE_CACHE_.__confirmed = m;
+  }
+  return TABLE_CACHE_.__confirmed;
+}
+function confirmedItem_(r) { const v = confirmedMap_()[String(r.Id)]; return v === undefined ? null : v; }
+function confirmList_(childId) { try { return JSON.parse(props_().getProperty('CONFIRMED_' + childId) || '[]'); } catch (e) { return []; } }
+
+/** まだ持っていないレア（SRはのぞく）の番号 */
+function missingRares_(rows) {
+  const col = collectionOf_(rows);
+  const out = [];
+  for (let i = 0; i < 90; i++) if (!col[i]) out.push(i);
+  return out;
+}
+
+/**
+ * 確定開きを進める（子供の画面を開くたびに呼ぶ）。
+ * ・確定した記録があとで却下されたら、確定をとりけして「待っている」状態にもどす
+ * ・待っている状態で、使ったあとに承認された対象の記録があれば、その1こ目をまだ持っていないレアに決めて保存する
+ */
+function settleConfirm_(childId, rows) {
+  const p = props_();
+  const byId = {};
+  rows.forEach(function (r) { byId[String(r.Id)] = r; });
+  let list = confirmList_(childId);
+  const lost = list.filter(function (e) { const r = byId[e.row]; return r && r.Status !== 'approved'; });
+  if (lost.length) {
+    list = list.filter(function (e) { return lost.indexOf(e) < 0; });
+    p.setProperty('CONFIRMED_' + childId, JSON.stringify(list));
+    if (!p.getProperty('CONFIRM_ARMED_' + childId)) p.setProperty('CONFIRM_ARMED_' + childId, JSON.stringify({ armedAt: lost[0].armedAt }));
+    delete TABLE_CACHE_.__confirmed;
+  }
+  let armed = null;
+  try { armed = JSON.parse(p.getProperty('CONFIRM_ARMED_' + childId) || 'null'); } catch (e) { armed = null; }
+  if (!armed) return;
+  const since = new Date(armed.armedAt).getTime();
+  const used = {};
+  list.forEach(function (e) { used[e.row] = true; });
+  const target = rows.filter(function (r) {
+    return dropsFor_(r) && !used[String(r.Id)] && r.ApprovedAt && new Date(r.ApprovedAt).getTime() > since;
+  }).sort(function (a, b) { return new Date(a.ApprovedAt) - new Date(b.ApprovedAt); })[0];
+  if (!target) return;
+  const missing = missingRares_(rows);
+  if (!missing.length) return; // レアがぜんぶそろっているときは待ったまま
+  // 記録IDから決める（同時に画面を開いても同じ結果になる）
+  const item = missing[hash32_(String(target.Id) + ':confirm') % missing.length];
+  list.push({ row: String(target.Id), item: item, armedAt: armed.armedAt });
+  p.setProperty('CONFIRMED_' + childId, JSON.stringify(list));
+  p.deleteProperty('CONFIRM_ARMED_' + childId);
+  delete TABLE_CACHE_.__confirmed;
+}
+
+/** 子供の画面に出す確定開きのようす */
+function confirmState_(childId, rows) {
+  const p = props_();
+  const armed = !!p.getProperty('CONFIRM_ARMED_' + childId);
+  const usedThisMonth = p.getProperty('CONFIRM_USED_' + childId) === thisMonth_();
+  const allRares = !missingRares_(rows).length;
+  return { armed: armed, usedThisMonth: usedThisMonth, allRares: allRares, available: !armed && !usedThisMonth && !allRares };
+}
+
+/** 確定開きを使う（月に1回） */
+function apiUseConfirm_(ctx) {
+  const me = requireUser_(ctx.token);
+  const child = targetChild_(me, ctx.args.childId);
+  const rows = ledgerRows_().filter(function (r) { return String(r.ChildId) === child.UserId; });
+  settleConfirm_(child.UserId, rows);
+  const st = confirmState_(child.UserId, rows);
+  if (st.armed) throw new Error('もう使っているよ。つぎに承認されるのをまってね。');
+  if (st.usedThisMonth) throw new Error('確定開きは月に1回だよ。来月1日にまた使えるよ。');
+  if (st.allRares) throw new Error('レアはもうぜんぶそろっているよ！SRはじぶんの運でさがそう。');
+  props_().setProperty('CONFIRM_ARMED_' + child.UserId, JSON.stringify({ armedAt: new Date().toISOString() }));
+  props_().setProperty('CONFIRM_USED_' + child.UserId, thisMonth_());
+  return { message: '確定開きを使ったよ！つぎに承認されたとき、まだ持っていないレアがかならず落ちてくるよ。' };
+}
+
+// ===================== りそく（月末の残高に、月○%。親が設定タブで決める） =====================
+
+function interestSettings_() {
+  const p = props_();
+  return { rate: Number(p.getProperty('INTEREST_YEN_RATE') || 0), start: p.getProperty('INTEREST_YEN_START') || '' };
+}
+function isInterestRow_(r) { return r.Type === 'interest' && String(r.ChoreId || '').indexOf(INTEREST_PREFIX + 'yen:') === 0; }
+
+/**
+ * まだ受け取っていないりそく（古い月から）。月末（翌月1日0時より前）の残高 × 月の% を切り捨て。
+ * 受け取っていない前の月のりそくも、その次の月の残高にふくめて計算する（ふくり）
+ */
+function interestDue_(rows) {
+  const s = interestSettings_();
+  if (!(s.rate > 0) || !/^\d{4}-\d{2}$/.test(s.start)) return [];
+  const mine = rows.filter(inBalance_);
+  const done = {};
+  rows.forEach(function (r) { if (isInterestRow_(r)) done[String(r.ChoreId).substring((INTEREST_PREFIX + 'yen:').length)] = true; });
+  const out = [];
+  let virtual = 0; // まだ受け取っていない前の月のりそく
+  for (let ym = s.start, i = 0; ym < thisMonth_() && i < 120; ym = monthAdd_(ym, 1), i++) {
+    if (done[ym]) continue;
+    const end = parseLocal_(monthAdd_(ym, 1) + '-01 00:00:00').getTime();
+    const bal = mine.reduce(function (t, r) { return new Date(r.Timestamp).getTime() < end ? t + (Number(r.Amount) || 0) : t; }, 0) + virtual;
+    const amount = bal > 0 ? Math.floor(bal * s.rate / 100) : 0;
+    if (amount <= 0) continue;
+    virtual += amount;
+    out.push({ ym: ym, label: Number(ym.substring(5)) + '月のりそく', amount: amount, base: bal, rate: s.rate });
+  }
+  return out;
+}
+
+/** 画面用：率・受け取れる分・これまでにりそくでふえた合計・月ごと・今月末このままなら */
+function interestInfo_(rows) {
+  const s = interestSettings_();
+  const got = rows.filter(function (r) { return isInterestRow_(r) && r.Status === 'approved'; }).sort(byNewest_);
+  const due = interestDue_(rows);
+  const bal = rows.reduce(function (t, r) { return inBalance_(r) ? t + (Number(r.Amount) || 0) : t; }, 0) +
+    due.reduce(function (t, d) { return t + d.amount; }, 0);
+  return {
+    rate: s.rate, on: s.rate > 0, due: due,
+    total: got.reduce(function (t, r) { return t + (Number(r.Amount) || 0); }, 0),
+    months: got.slice(0, 12).map(function (r) { return { label: String(r.ChoreName), amount: Number(r.Amount) || 0 }; }),
+    estimate: s.rate > 0 && bal > 0 ? Math.floor(bal * s.rate / 100) : 0
+  };
+}
+
+/** りそくを受け取る（たまっている月の分をまとめて。各月の翌月1日付で記録） */
+function apiReceiveInterest_(ctx) {
+  const me = requireUser_(ctx.token);
+  const child = targetChild_(me, ctx.args.childId);
+  const rows = ledgerRows_().filter(function (r) { return String(r.ChildId) === child.UserId; });
+  const due = interestDue_(rows);
+  if (!due.length) return { message: 'うけとれるりそくはありません。' };
+  due.forEach(function (d) {
+    addLedger_({
+      Timestamp: parseLocal_(monthAdd_(d.ym, 1) + '-01 00:00:00'),
+      ChildId: child.UserId, Type: 'interest', ChoreId: INTEREST_PREFIX + 'yen:' + d.ym, ChoreName: d.label,
+      Status: 'approved', Amount: d.amount, Memo: d.label + '（' + d.base + '円 × ' + d.rate + '%）',
+      RequestedBy: 'システム', RequestedById: 'system', ApprovedBy: 'システム', ApprovedAt: new Date()
+    });
+  });
+  const total = due.reduce(function (t, d) { return t + d.amount; }, 0);
+  return { message: 'りそく +' + total + '円 をうけとったよ！' };
 }
 
 function balancesByChild_() {
@@ -983,6 +1244,7 @@ function apiDashboard_(ctx) {
   const me = requireUser_(ctx.token);
   const child = targetChild_(me, ctx.args.childId);
   const rows = ledgerRows_().filter(function (r) { return String(r.ChildId) === child.UserId; });
+  settleConfirm_(child.UserId, rows); // 確定開きを待っていて、そのあと承認された記録があれば確定させる
   const today = todayStr_();
   const todayCount = rows.filter(function (r) { return isCountedChore_(r) && dayOf_(r.Timestamp) === today; }).length;
   const isToday = function (r) { return r.Type === 'unlock_request' && dayOf_(r.Timestamp) === today; };
@@ -997,6 +1259,18 @@ function apiDashboard_(ctx) {
     viewerRole: me.Role,
     balance: rows.reduce(function (s, r) { return inBalance_(r) ? s + (Number(r.Amount) || 0) : s; }, 0),
     chores: listChores_(),
+    // 家族みんなの今日のお手伝い（兄弟がやって「家族で1日○回まで」に達したものは押せない）
+    choreToday: choreTodayByFamily_(),
+    // ちょきん計算き用：この家族のボーナスの有効/無効と金額
+    bonusRules: {
+      sameDay: sameDayBonusOn_(), sameDayFrom: SAME_DAY_BONUS_FROM, sameDayAmount: SAME_DAY_BONUS_AMOUNT,
+      streak: streakBonusOn_(), streakDays: STREAK_DAYS_FOR_BONUS, streakAmount: STREAK_BONUS_AMOUNT
+    },
+    // レアずかん（番号 → 持っている数）・兄弟が見つけたもの・確定開き・落ちる確率（1こあたり10万分の○）
+    collection: collectionOf_(rows),
+    siblingFound: siblingsFound_(child.UserId),
+    confirm: confirmState_(child.UserId, rows),
+    dropRates: { perApproval: DROPS_PER_APPROVAL, sr: DROP_SR_PER_100K * dropBoost_(), rare: DROP_RARE_PER_100K * dropBoost_() },
     // 表示件数より古いりれきは表示しない（非表示フラグは付けないので、カレンダーの日付からは見られる）
     history: choreRows.concat(moneyRows).sort(byNewest_).map(function (r) { return outRow_(r, me); }),
     historyLimit: limit,
@@ -1028,7 +1302,8 @@ function apiDashboardExtras_(ctx) {
       sameDayActive: sameDayBonusOn_() && todayCount >= SAME_DAY_BONUS_FROM - 1,
       pendingMonths: unconfirmedBonusMonths_(rows)
     },
-    allowance: allowanceDue_(rows)
+    allowance: allowanceDue_(rows),
+    interest: interestInfo_(rows)
   };
 }
 
@@ -1051,6 +1326,11 @@ function apiPressChore_(ctx) {
 
   const isParent = me.Role === 'parent';
   if (!isParent) {
+    // 家族で1日○回まで（親が代わりに記録するときは止めない）
+    const fam = choreTodayByFamily_()[chore.id];
+    if (chore.dailyMax && fam && fam.count >= chore.dailyMax) {
+      throw new Error('「' + chore.name + '」はきょう ' + fam.by.join('・') + ' がやったよ。ほかのお手伝いをえらんでね。');
+    }
     const today = todayStr_();
     const rows = ledgerRows_().filter(function (r) { return String(r.ChildId) === child.UserId && dayOf_(r.Timestamp) === today; });
     const count = rows.filter(isCountedChore_).length;
@@ -1135,7 +1415,12 @@ function apiApprove_(ctx) {
   if (isTrue_(r.Hidden)) throw new Error('非表示にした記録は、承認・却下を変更できません。');
   if (r.Status !== 'pending' && r.Status !== 'rejected') throw new Error('この記録は承認できません。');
   // 最後に決めた人だけを残す（ApprovedBy）。前の却下・再承認の書き込みは消す
-  updateRow_(SHEET_LEDGER, r._row, { Status: 'approved', ApprovedBy: me.Name, ApprovedAt: new Date(), Memo: stripDecisionMemo_(r.Memo) });
+  const patch = { Status: 'approved', ApprovedBy: me.Name, ApprovedAt: new Date(), Memo: stripDecisionMemo_(r.Memo) };
+  // 「ありがとう」。お手伝いで親がえらばなかったら、ランダムでどれかを送る（再承認で空なら前のまま）
+  let thanks = String(ctx.args.thanks || '').trim().substring(0, 40);
+  if (!thanks && !r.Thanks && r.Type === 'chore') thanks = THANKS_DEFAULTS[Math.floor(Math.random() * THANKS_DEFAULTS.length)];
+  if (thanks) patch.Thanks = thanks;
+  updateRow_(SHEET_LEDGER, r._row, patch);
   return { message: r.Status === 'rejected' ? '再承認しました。' : '承認しました。' };
 }
 
@@ -1231,7 +1516,7 @@ function apiSettings_(ctx) {
     appName: appName_(), appIcon: appIcon_(), spreadsheetUrl: ss_().getUrl(), devices: listDevices_(),
     globalLockUntil: g ? new Date(g).toISOString() : '', version: SERVER_VERSION,
     bonusSameDay: sameDayBonusOn_(), bonusStreak: streakBonusOn_(),
-    allowance: allowanceSettings_(), historyLimit: historyLimit_()
+    allowance: allowanceSettings_(), historyLimit: historyLimit_(), interest: interestSettings_()
   };
 }
 
@@ -1265,6 +1550,13 @@ function apiSaveSettings_(ctx) {
     const n = Math.round(Number(a.historyLimit));
     if (!(n >= 5 && n <= 500)) throw new Error('りれきの表示件数は5〜500件で入力してください。');
     p.setProperty('HISTORY_LIMIT', String(n));
+  }
+  // りそく（月○%。0＝なし）。なし → ありにしたときは、その月から付け始める（さかのぼらない）
+  if (a.interest) {
+    const rate = a.interest.on ? Math.round(Number(a.interest.rate) * 10) / 10 : 0;
+    if (a.interest.on && !(rate > 0 && rate <= INTEREST_MAX_RATE)) throw new Error('りそくは 0.1〜' + INTEREST_MAX_RATE + '% で入力してください。');
+    if (rate > 0 && !(interestSettings_().rate > 0)) p.setProperty('INTEREST_YEN_START', thisMonth_());
+    p.setProperty('INTEREST_YEN_RATE', String(rate));
   }
   return { message: '設定を保存しました。' };
 }

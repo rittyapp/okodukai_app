@@ -269,6 +269,18 @@ async function boot() {
   if (window.OKD_DEMO) loginMsg('【デモ】子供のPINは 1234（あいり）/ 5678（しょう）。「Googleでログイン」で親の画面になります。データは保存されません。');
 }
 
+/** サーバー（スプレッドシート側の Apps Script）がアプリより古いか。古いと新しい機能（ずかん・りそく等）が動かない */
+function serverIsOld() {
+  const v = (SERVER && SERVER.version) || '0';
+  const a = String(v).split('.').map(Number), b = String(CFG.VERSION).split('.').map(Number);
+  for (let i = 0; i < 3; i++) { if ((a[i] || 0) !== (b[i] || 0)) return (a[i] || 0) < (b[i] || 0); }
+  return false;
+}
+function serverOldMsg() {
+  return 'スプレッドシート側のプログラムが古いです（サーバー v' + ((SERVER && SERVER.version) || '?') + ' / アプリ v' + CFG.VERSION + '）。' +
+    'スプレッドシートの持ち主が「拡張機能 → Apps Script」で Code.gs を最新に置き換え、「デプロイを管理 → 編集 → 新バージョン」でデプロイし直してください。';
+}
+
 async function loadConfig() {
   try {
     SERVER = await api('config');
@@ -276,6 +288,7 @@ async function loadConfig() {
     $('btnSetup').classList.toggle('hidden', !SERVER.needsSetup);
     $('versionText').textContent = 'v' + CFG.VERSION + ' / サーバー v' + SERVER.version;
     if (SERVER.needsSetup) loginMsg('まだ初期設定がされていないか、スプレッドシートが壊れています。スプレッドシートの持ち主が「初期設定」を押してください。');
+    else if (serverIsOld()) loginMsg(serverOldMsg(), true);
   } catch (e) {
     loginMsg('接続先に接続できません：' + e.message + '\n（共有QRコード → 接続先を変更する から設定し直せます）', true);
   }
@@ -1290,6 +1303,7 @@ function renderRares() {
 /** 親のずかんタブ */
 async function refreshParentZukan() {
   try {
+    if (serverIsOld()) { toast(serverOldMsg(), true); return; }
     const z = await api('zukan');
     renderZukanBox({ count: 'pRareCount', confirm: 'pConfirmBox', grid: 'pRareGrid', note: 'pRareNote' }, z, 'parent');
   } catch (e) { fail(e); }
@@ -1623,6 +1637,9 @@ async function refreshSettings() {
     // ボーナス・定期おこづかい・りれきの表示件数
     $('setBonusSame').checked = s.bonusSameDay;
     $('setBonusStreak').checked = s.bonusStreak;
+    if (!s.allowance) s.allowance = {};
+    if (!s.interest) s.interest = { rate: 0 };
+    if (serverIsOld()) toast(serverOldMsg(), true);
     $('setAlEnabled').checked = s.allowance.enabled;
     $('setAlAmount').value = s.allowance.amount || '';
     $('setAlDay').value = s.allowance.day || 1;

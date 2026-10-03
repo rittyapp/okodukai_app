@@ -33,7 +33,7 @@
  */
 
 // ===================== 設定値 =====================
-const SERVER_VERSION = '3.4.0';
+const SERVER_VERSION = '3.4.1';
 
 // 公開してよい情報のみ。クライアントIDはブラウザに渡る前提の値で、秘密ではない。
 const DEFAULT_OAUTH_CLIENT_ID = '337708567191-tpqbqqinfgm5bpje56ccdj2gmkphdngi.apps.googleusercontent.com';

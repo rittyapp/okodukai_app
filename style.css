@@ -361,6 +361,8 @@ dialog h3 { margin: 0 0 8px; font-size: 17px; }
 .pick-cell { position: relative; display: flex; flex-direction: column; align-items: center; gap: 1px; border: 2px solid #eee4cc; background: #fffaf0; border-radius: 12px; padding: 6px 2px 4px; cursor: pointer; font: inherit; }
 .pick-cell.t2 { background: #f2f8ff; border-color: #d6e8ff; }
 .pick-cell.t3 { background: #f6f0ff; border-color: #e3d6ff; }
+.pick-cell.mystery { background: #f1ede6; border-color: #e3dccd; }
+.pick-cell.mystery .pick-emoji { color: #b7ac98; font-weight: bold; }
 .pick-cell.sel { border-color: #f0a400; box-shadow: 0 0 0 3px #ffd75e; transform: scale(1.04); }
 .pick-emoji { font-size: 28px; line-height: 1.1; }
 .pick-name { font-size: 10px; line-height: 1.2; text-align: center; word-break: break-all; }

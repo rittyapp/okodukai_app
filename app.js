@@ -269,11 +269,12 @@ async function boot() {
   if (window.OKD_DEMO) loginMsg('【デモ】子供のPINは 1234（あいり）/ 5678（しょう）。「Googleでログイン」で親の画面になります。データは保存されません。');
 }
 
-/** サーバー（スプレッドシート側の Apps Script）がアプリより古いか。古いと新しい機能（ずかん・りそく等）が動かない */
+/** サーバー（スプレッドシート側の Apps Script）がアプリより古いか。古いと新しい機能（ずかん・りそく等）が動かない。
+ *  3けためは画面だけの修正なので比べない（3.5.1 の画面と 3.5.0 のサーバーはOK） */
 function serverIsOld() {
   const v = (SERVER && SERVER.version) || '0';
   const a = String(v).split('.').map(Number), b = String(CFG.VERSION).split('.').map(Number);
-  for (let i = 0; i < 3; i++) { if ((a[i] || 0) !== (b[i] || 0)) return (a[i] || 0) < (b[i] || 0); }
+  for (let i = 0; i < 2; i++) { if ((a[i] || 0) !== (b[i] || 0)) return (a[i] || 0) < (b[i] || 0); }
   return false;
 }
 function serverOldMsg() {
@@ -1320,8 +1321,10 @@ async function useConfirm(who, btn) {
     const n = col[it.id] || 0;
     const nx = n ? zToNext(it.id, n + 1) : null;
     const lvUp = n && zLevel(it.id, n + 1) > zLevel(it.id, n);
-    return '<button type="button" class="pick-cell t' + it.tier + '" data-p="' + it.id + '">' +
-      '<span class="pick-emoji">' + it.emoji + '</span><span class="pick-name">' + esc(it.name) + '</span>' +
+    // まだ持っていないものは「？」のまま（なにが出るかは、めくってのおたのしみ）
+    return '<button type="button" class="pick-cell t' + it.tier + (n ? '' : ' mystery') + '" data-p="' + it.id + '">' +
+      (n ? '<span class="pick-emoji">' + it.emoji + '</span><span class="pick-name">' + esc(it.name) + '</span>'
+        : '<span class="pick-emoji">？</span><span class="pick-name">No.' + it.no + '</span>') +
       '<span class="pick-tier">' + '★'.repeat(it.tier) + '</span>' +
       (!n ? '<span class="pick-tag new">NEW</span>' : lvUp ? '<span class="pick-tag up">Lv' + zLevel(it.id, n + 1) + '!</span>'
         : nx ? '<span class="pick-tag">あと' + nx.left + '</span>' : '') + '</button>';
@@ -1330,8 +1333,8 @@ async function useConfirm(who, btn) {
   const have = rares.filter((it) => col[it.id] && zLevel(it.id, col[it.id]) < 3);
   let picked = '';
   const p = dialog('🎫 ゴールデンチケット',
-    '<p class="pick-lead">すきなレアを <b>1こ</b> えらんでね！<br><small>えらんだものが、すぐにずかんに入るよ（SRはえらべないよ）</small></p>' +
-    (miss.length ? '<div class="pick-sec">まだ持っていない（' + miss.length + '）</div><div class="pick-grid">' + miss.map(cell).join('') + '</div>' : '') +
+    '<p class="pick-lead"><b>1こ</b> えらんでね！<br><small>「？」はなにが出るかおたのしみ。もっているものは もういっこ ふえるよ（SRはえらべないよ）</small></p>' +
+    (miss.length ? '<div class="pick-sec">まだ見ていない「？」（' + miss.length + '）</div><div class="pick-grid">' + miss.map(cell).join('') + '</div>' : '') +
     (have.length ? '<div class="pick-sec">もういっこ集めてレベルアップ</div><div class="pick-grid">' + have.map(cell).join('') + '</div>' : '') +
     (!miss.length && !have.length ? '<p>レアはぜんぶ さいこうレベル！すごい！</p>' : ''), 'これにする！');
   const okBtn = $('dlgOk');
@@ -1342,7 +1345,7 @@ async function useConfirm(who, btn) {
       b.classList.add('sel');
       picked = b.dataset.p;
       okBtn.disabled = false;
-      okBtn.textContent = zItem(picked).emoji + ' ' + zItem(picked).name + ' にする！';
+      okBtn.textContent = b.classList.contains('mystery') ? '？ No.' + zItem(picked).no + ' にする！' : zItem(picked).emoji + ' ' + zItem(picked).name + ' にする！';
     };
   });
   const ok = await p;

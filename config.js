@@ -7,7 +7,7 @@
  *                          初期設定画面の「原本をコピー」ボタンが /copy リンクを開く。空なら手順だけ表示
  */
 window.OKODUKAI_CONFIG = {
-  VERSION: '3.5.2',
+  VERSION: '3.5.3',
   DEFAULT_OAUTH_CLIENT_ID: '337708567191-tpqbqqinfgm5bpje56ccdj2gmkphdngi.apps.googleusercontent.com',
   TEMPLATE_SPREADSHEET_ID: '12AlV83nVed3BcPURJe2hp_7dEn7ux9BGlAIf-8ZjQRg'
 };

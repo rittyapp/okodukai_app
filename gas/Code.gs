@@ -20,9 +20,9 @@
  *   ALLOWANCE_ENABLED / ALLOWANCE_AMOUNT / ALLOWANCE_DAY / ALLOWANCE_START … 定期おこづかい（金額・毎月の支給日・開始年月 yyyy-MM）
  *   INTEREST_YEN_RATE / INTEREST_YEN_START … りそく（月の%。0か空＝なし）と付け始めた月（yyyy-MM）。設定タブから変更
  *   DROP_TEST_BOOST     … ずかんの落下物の確率を何倍にするか（お試し用。ふだんは空＝1倍。新しく引くくじだけに効く）
- *   CONFIRM_USED_<ユーザーID> … ゴールデンチケット（月に1回、好きなレアを1こえらんでもらえる）を使った月。自動で入る（手で触らない）
+ *   CONFIRM_USED_<ユーザーID> … v3.5.2 までの「使った月」の印。v3.5.3 からは PICKS_ だけで判定する（読まない）
  *   PICKS_<ユーザーID>        … ゴールデンチケットでえらんだもの [{ym, id, at}]。ずかんに足される（手で触らない）
- *   CONFIRM_ARMED_<ユーザーID> … v3.4 の確定開き（つぎの承認でレアが落ちる）を待っている状態。v3.5 からは新しく入らない
+ *   CONFIRM_ARMED_<ユーザーID> … v3.4 の確定開き（つぎの承認でレアが落ちる）。v3.5.3 で廃止（見つけたら消す）
  *   CONFIRMED_<子供ID>  … v3.3 の確定開きの結果（v3.3 までの記録を読むためだけに使う）
  *   sess_<token>        … ログインセッション。自動で作成・削除される（手で触らない）。
  *
@@ -35,7 +35,7 @@
  */
 
 // ===================== 設定値 =====================
-const SERVER_VERSION = '3.5.0';
+const SERVER_VERSION = '3.5.3';
 
 // 公開してよい情報のみ。クライアントIDはブラウザに渡る前提の値で、秘密ではない。
 const DEFAULT_OAUTH_CLIENT_ID = '337708567191-tpqbqqinfgm5bpje56ccdj2gmkphdngi.apps.googleusercontent.com';
@@ -1038,16 +1038,9 @@ function missingRares_(personId) {
 }
 /** n 回くじを引く。確定開きを待っていれば1こ目を「まだ持っていないレア」にする。保存する文字列を返す */
 function rollFor_(personId, n) {
-  const items = [];
-  const armed = armedOf_(personId);
-  if (armed) {
-    const missing = missingRares_(personId);
-    if (missing.length) {
-      items.push('!' + missing[Math.floor(Math.random() * missing.length)]);
-      props_().deleteProperty('CONFIRM_ARMED_' + personId);
-    }
-  }
-  return items.concat(drawItems_(n - items.length)).join(',') || '-';
+  // v3.5.3：確定開き（CONFIRM_ARMED_）は廃止。残っていても使わずに消す
+  if (armedOf_(personId)) props_().deleteProperty('CONFIRM_ARMED_' + personId);
+  return drawItems_(n).join(',') || '-';
 }
 
 /**
@@ -1073,6 +1066,7 @@ function rollOnApprove_(r) {
 
 /** 却下したとき：その記録で確定開きを使っていたら、もう一度待っている状態にもどす */
 function rearmOnReject_(r) {
+  return; // v3.5.3：確定開きは廃止したので、却下しても待ち状態にもどさない
   const fix = function (who, confirmed) {
     if (!who || !confirmed || armedOf_(who)) return;
     props_().setProperty('CONFIRM_ARMED_' + who, JSON.stringify({ armedAt: new Date().toISOString(), fromRow: String(r.Id) }));
@@ -1090,10 +1084,12 @@ function picksOf_(personId) { return picksFrom_(props_().getProperty('PICKS_' + 
 
 /** 画面に出すずかん：自分の持ち物・家族が見つけたもの・ゴールデンチケット・確率 */
 function zukanFor_(personId) {
-  const usedThisMonth = props_().getProperty('CONFIRM_USED_' + personId) === thisMonth_();
-  const armed = !!armedOf_(personId);
+  // v3.5.3：今月使ったかは、ゴールデンチケットでえらんだ記録（PICKS_）だけで決める。前の確定開きは消す
+  if (armedOf_(personId)) props_().deleteProperty('CONFIRM_ARMED_' + personId);
+  const armed = false;
   const picks = picksOf_(personId);
   const last = picks.length ? picks[picks.length - 1] : null;
+  const usedThisMonth = !!(last && last.ym === thisMonth_());
   return {
     collection: collectionOf_(personId),
     familyFound: familyFound_(personId),
@@ -1122,7 +1118,6 @@ function apiUseConfirm_(ctx) {
   if (!ZUKAN_TIER[id]) throw new Error('えらんだものが見つからないよ。もう一度えらんでね。');
   if (ZUKAN_TIER[id] >= 4) throw new Error('SRはチケットではえらべないよ。じぶんの運でさがそう！');
   const z = zukanFor_(who);
-  if (z.confirm.armed) throw new Error('前の確定開きがまだ待っているよ。つぎに承認されたら使えるようになるよ。');
   if (z.confirm.usedThisMonth) throw new Error('ゴールデンチケットは月に1まいだよ。来月1日にまたもらえるよ。');
   const picks = picksOf_(who);
   picks.push({ ym: thisMonth_(), id: id, at: new Date().toISOString() });

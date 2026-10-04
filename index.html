@@ -16,15 +16,18 @@
 <link rel="manifest" href="manifest.json" id="linkManifest">
 <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icons/icon.svg">
-<link rel="stylesheet" href="style.css">
-<script src="config.js"></script>
 <script>
-  // ?demo=1 のときだけ、ブラウザ内で動くお試し用のサーバーを読み込む
-  if (/[?&]demo=1/.test(location.search)) document.write('<script src="demo/mock.js"><\/script>');
+  // 更新がすぐ届くように（スマホに古いファイルが残らないように）：
+  // config.js は毎回取り直し、ほかのファイルは「?v=バージョン」つきで読む。バージョンを上げれば全員に新しいファイルが届く
+  document.write('<script src="config.js?t=' + Date.now() + '"><\/script>');
 </script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js" defer></script>
-<script src="zukan.js" defer></script>
-<script src="app.js" defer></script>
+<script>
+  window.OKD_V = (window.OKODUKAI_CONFIG && window.OKODUKAI_CONFIG.VERSION) || String(Date.now());
+  document.write('<link rel="stylesheet" href="style.css?v=' + OKD_V + '">');
+  // ?demo=1 のときだけ、ブラウザ内で動くお試し用のサーバーを読み込む
+  if (/[?&]demo=1/.test(location.search)) document.write('<script src="demo/mock.js?v=' + OKD_V + '"><\/script>');
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 </head>
 <body>
 
@@ -342,5 +345,10 @@
   </form>
 </dialog>
 
+<script>
+  // 画面の部品がそろってから読む（defer と同じ順番：ずかんのデータ → アプリ本体）
+  document.write('<script src="zukan.js?v=' + OKD_V + '"><\/script>');
+  document.write('<script src="app.js?v=' + OKD_V + '"><\/script>');
+</script>
 </body>
 </html>

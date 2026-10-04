@@ -1316,24 +1316,28 @@ async function useConfirm(who, btn) {
   const key = 'confirm_' + who;
   if (isCooling(key)) return;
   const col = (ZUKAN_VIEW && ZUKAN_VIEW.collection) || {};
+  const fam = (ZUKAN_VIEW && ZUKAN_VIEW.familyFound) || {};
   const rares = ZK.items.map((it) => ZK_BY_ID[it.id]).filter((it) => it.tier < 4).sort((a, b) => b.tier - a.tier || a.no - b.no);
   const cell = (it) => {
     const n = col[it.id] || 0;
     const nx = n ? zToNext(it.id, n + 1) : null;
     const lvUp = n && zLevel(it.id, n + 1) > zLevel(it.id, n);
-    // まだ持っていないものは「？」のまま（なにが出るかは、めくってのおたのしみ）
-    return '<button type="button" class="pick-cell t' + it.tier + (n ? '' : ' mystery') + '" data-p="' + it.id + '">' +
+    // まだ持っていないものは「？」のまま（なにが出るかは、めくってのおたのしみ）。家族が見つけたものはシルエットだけ見える
+    const sil = !n && fam[it.id];
+    return '<button type="button" class="pick-cell t' + it.tier + (n ? '' : ' mystery') + (sil ? ' sil' : '') + '" data-p="' + it.id + '">' +
       (n ? '<span class="pick-emoji">' + it.emoji + '</span><span class="pick-name">' + esc(it.name) + '</span>'
+        : sil ? '<span class="pick-emoji rare-shadow">' + it.emoji + '</span><span class="pick-name">No.' + it.no + '</span>'
         : '<span class="pick-emoji">？</span><span class="pick-name">No.' + it.no + '</span>') +
       '<span class="pick-tier">' + '★'.repeat(it.tier) + '</span>' +
       (!n ? '<span class="pick-tag new">NEW</span>' : lvUp ? '<span class="pick-tag up">Lv' + zLevel(it.id, n + 1) + '!</span>'
         : nx ? '<span class="pick-tag">あと' + nx.left + '</span>' : '') + '</button>';
   };
-  const miss = rares.filter((it) => !col[it.id]);
+  // 家族が見つけている（シルエット）ものを先に
+  const miss = rares.filter((it) => !col[it.id]).sort((a, b) => (fam[b.id] ? 1 : 0) - (fam[a.id] ? 1 : 0));
   const have = rares.filter((it) => col[it.id] && zLevel(it.id, col[it.id]) < 3);
   let picked = '';
   const p = dialog('🎫 ゴールデンチケット',
-    '<p class="pick-lead"><b>1こ</b> えらんでね！<br><small>「？」はなにが出るかおたのしみ。もっているものは もういっこ ふえるよ（SRはえらべないよ）</small></p>' +
+    '<p class="pick-lead"><b>1こ</b> えらんでね！<br><small>「？」はなにが出るかおたのしみ。かげは 家族が見つけたもの。もっているものは もういっこ ふえるよ（SRはえらべないよ）</small></p>' +
     (miss.length ? '<div class="pick-sec">まだ見ていない「？」（' + miss.length + '）</div><div class="pick-grid">' + miss.map(cell).join('') + '</div>' : '') +
     (have.length ? '<div class="pick-sec">もういっこ集めてレベルアップ</div><div class="pick-grid">' + have.map(cell).join('') + '</div>' : '') +
     (!miss.length && !have.length ? '<p>レアはぜんぶ さいこうレベル！すごい！</p>' : ''), 'これにする！');

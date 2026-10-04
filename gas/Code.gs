@@ -20,7 +20,9 @@
  *   ALLOWANCE_ENABLED / ALLOWANCE_AMOUNT / ALLOWANCE_DAY / ALLOWANCE_START … 定期おこづかい（金額・毎月の支給日・開始年月 yyyy-MM）
  *   INTEREST_YEN_RATE / INTEREST_YEN_START … りそく（月の%。0か空＝なし）と付け始めた月（yyyy-MM）。設定タブから変更
  *   DROP_TEST_BOOST     … ずかんの落下物の確率を何倍にするか（お試し用。ふだんは空＝1倍。新しく引くくじだけに効く）
- *   CONFIRM_ARMED_<ユーザーID> / CONFIRM_USED_<ユーザーID> … 確定開き（子供も親も）の状態。自動で入る（手で触らない）
+ *   CONFIRM_USED_<ユーザーID> … ゴールデンチケット（月に1回、好きなレアを1こえらんでもらえる）を使った月。自動で入る（手で触らない）
+ *   PICKS_<ユーザーID>        … ゴールデンチケットでえらんだもの [{ym, id, at}]。ずかんに足される（手で触らない）
+ *   CONFIRM_ARMED_<ユーザーID> … v3.4 の確定開き（つぎの承認でレアが落ちる）を待っている状態。v3.5 からは新しく入らない
  *   CONFIRMED_<子供ID>  … v3.3 の確定開きの結果（v3.3 までの記録を読むためだけに使う）
  *   sess_<token>        … ログインセッション。自動で作成・削除される（手で触らない）。
  *
@@ -33,7 +35,7 @@
  */
 
 // ===================== 設定値 =====================
-const SERVER_VERSION = '3.4.1';
+const SERVER_VERSION = '3.5.0';
 
 // 公開してよい情報のみ。クライアントIDはブラウザに渡る前提の値で、秘密ではない。
 const DEFAULT_OAUTH_CLIENT_ID = '337708567191-tpqbqqinfgm5bpje56ccdj2gmkphdngi.apps.googleusercontent.com';
@@ -981,6 +983,12 @@ function collections_() {
       const p = parentDrops_(r);
       add(p.owner, p.ids);
     });
+    // ゴールデンチケットでえらんだもの
+    const all = props_().getProperties();
+    Object.keys(all).forEach(function (k) {
+      if (k.indexOf('PICKS_') !== 0) return;
+      add(k.substring(6), picksFrom_(all[k]).map(function (e) { return e.id; }));
+    });
     TABLE_CACHE_.__collections = c;
   }
   return TABLE_CACHE_.__collections;
@@ -1074,15 +1082,25 @@ function rearmOnReject_(r) {
   if (p.indexOf('|') > 0) fix(p.substring(0, p.indexOf('|')), parseDrops_(p.substring(p.indexOf('|') + 1)).confirmed);
 }
 
-/** 画面に出すずかん：自分の持ち物・家族が見つけたもの・確定開き・確率 */
+/** ゴールデンチケットでえらんだもの [{ym, id, at}]（こわれていたら空） */
+function picksFrom_(json) {
+  try { return (JSON.parse(json || '[]') || []).filter(function (e) { return e && ZUKAN_TIER[e.id]; }); } catch (e) { return []; }
+}
+function picksOf_(personId) { return picksFrom_(props_().getProperty('PICKS_' + personId)); }
+
+/** 画面に出すずかん：自分の持ち物・家族が見つけたもの・ゴールデンチケット・確率 */
 function zukanFor_(personId) {
   const usedThisMonth = props_().getProperty('CONFIRM_USED_' + personId) === thisMonth_();
   const armed = !!armedOf_(personId);
-  const allRares = !missingRares_(personId).length;
+  const picks = picksOf_(personId);
+  const last = picks.length ? picks[picks.length - 1] : null;
   return {
     collection: collectionOf_(personId),
     familyFound: familyFound_(personId),
-    confirm: { armed: armed, usedThisMonth: usedThisMonth, allRares: allRares, available: !armed && !usedThisMonth && !allRares },
+    // ticket：今月まだ使えるか・今月えらんだもの・つぎに使える月
+    confirm: { armed: armed, usedThisMonth: usedThisMonth, available: !armed && !usedThisMonth,
+      pickedThisMonth: last && last.ym === thisMonth_() ? last.id : '', nextMonth: monthAdd_(thisMonth_(), 1),
+      picks: picks.length },
     rates: { child: DROPS_CHILD, parent: DROPS_PARENT, sr: DROP_SR_PER_100K * dropBoost_(), rare: DROP_RARE_PER_100K * dropBoost_() }
   };
 }
@@ -1093,17 +1111,25 @@ function apiZukan_(ctx) {
   return zukanFor_(me.UserId);
 }
 
-/** 確定開きを使う（月に1回）。子供は自分の分、親は childId があればその子の分、なければ自分の分 */
+/**
+ * ゴールデンチケットを使う（月に1回）。えらんだレア（★1〜★3。SRはえらべない）をその場で1こもらえる。
+ * 子供は自分の分、親は childId があればその子の分、なければ自分の分
+ */
 function apiUseConfirm_(ctx) {
   const me = requireUser_(ctx.token);
   const who = me.Role === 'parent' && !ctx.args.childId ? me.UserId : targetChild_(me, ctx.args.childId).UserId;
+  const id = String(ctx.args.itemId || '');
+  if (!ZUKAN_TIER[id]) throw new Error('えらんだものが見つからないよ。もう一度えらんでね。');
+  if (ZUKAN_TIER[id] >= 4) throw new Error('SRはチケットではえらべないよ。じぶんの運でさがそう！');
   const z = zukanFor_(who);
-  if (z.confirm.armed) throw new Error('もう使っているよ。つぎに承認されるのをまってね。');
-  if (z.confirm.usedThisMonth) throw new Error('確定開きは月に1回だよ。来月1日にまた使えるよ。');
-  if (z.confirm.allRares) throw new Error('レアはもうぜんぶそろっているよ！SRはじぶんの運でさがそう。');
-  props_().setProperty('CONFIRM_ARMED_' + who, JSON.stringify({ armedAt: new Date().toISOString(), fromRow: '' }));
+  if (z.confirm.armed) throw new Error('前の確定開きがまだ待っているよ。つぎに承認されたら使えるようになるよ。');
+  if (z.confirm.usedThisMonth) throw new Error('ゴールデンチケットは月に1まいだよ。来月1日にまたもらえるよ。');
+  const picks = picksOf_(who);
+  picks.push({ ym: thisMonth_(), id: id, at: new Date().toISOString() });
+  props_().setProperty('PICKS_' + who, JSON.stringify(picks));
   props_().setProperty('CONFIRM_USED_' + who, thisMonth_());
-  return { message: '確定開きを使ったよ！つぎに承認されたとき、まだ持っていないレアがかならず落ちてくるよ。' };
+  delete TABLE_CACHE_.__collections;
+  return { message: 'ゲット！', itemId: id, zukan: zukanFor_(who) };
 }
 
 /** 修復：v3.3 までの承認済みの記録に、当時の計算結果を Drops として書きこむ（以後は読み直しても変わらない） */

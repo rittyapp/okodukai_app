@@ -1107,25 +1107,15 @@ async function askThanks(r) {
   return $('fThanks').value.trim();
 }
 
-/** りそくカード：率・りそくでふえた合計・「じぶんでためた分」と「りそく」の割合・月ごと・今月末このままなら・受け取り */
+/** りそく：ちょきん計算きの下に1行だけ（率・これまでの合計）。ついた月があれば「うけとる」ボタン */
 function renderInterest() {
   const el = $('interestYen');
   const x = CHILD.extras && CHILD.extras.interest;
   if (!x || (!x.on && !x.total)) { el.classList.add('hidden'); return; }
-  const bal = CHILD.data.balance;
   const dueSum = x.due.reduce((t, m) => t + m.amount, 0);
-  const own = Math.max(bal - x.total, 0);
-  const pct = bal > 0 ? Math.min(100, Math.round(x.total / bal * 100)) : 0;
-  el.innerHTML = '<div class="int-head"><span>💹 りそく</span><b>' + (x.on ? '毎月 ' + x.rate + '% ふえる' : 'いまはお休み') + '</b></div>' +
-    '<div class="int-total">りそくで ふえた合計 <b>+' + yen(x.total) + '</b></div>' +
-    '<div class="int-bar"><i class="own" style="width:' + (100 - pct) + '%"></i><i class="int" style="width:' + pct + '%"></i></div>' +
-    '<div class="int-legend"><span><i class="own"></i>じぶんでためた ' + yen(own) + '</span><span><i class="int"></i>りそく ' + yen(x.total) + '</span></div>' +
-    (x.months.length ? '<div class="int-months">' + x.months.slice(0, 6).map((m) =>
-      '<span>' + esc(m.label.replace('のりそく', '')) + '<b>+' + yen(m.amount) + '</b></span>').join('') + '</div>' : '') +
-    (x.on ? '<div class="note">つかわなければ、今月末に <b>+' + yen(x.estimate) + '</b> ふえるよ（' + yen(bal + dueSum) + ' × ' + x.rate +
-      '%）。ふえた分にも、またりそくがつくよ。</div>' : '') +
-    (dueSum ? '<div class="int-due"><b>りそくがついたよ！</b><br>' + x.due.map((m) => esc(m.label) + ' +' + yen(m.amount)).join('、') +
-      '<button class="btn btn-main" data-recv="1">うけとる（+' + yen(dueSum) + '）</button></div>' : '');
+  el.innerHTML = '<div class="int-line"><span>💹 りそく ' + (x.on ? '毎月 <b>' + x.rate + '%</b>' : 'お休み中') + '</span>' +
+    '<span>これまで <b>+' + yen(x.total) + '</b></span></div>' +
+    (dueSum ? '<button class="btn btn-main int-recv" data-recv="1">りそく +' + yen(dueSum) + ' をうけとる</button>' : '');
   el.classList.remove('hidden');
   const b = el.querySelector('[data-recv]');
   if (b) { b.onclick = () => receiveInterest(b); applyCool('interest', b); }
@@ -1283,16 +1273,24 @@ function renderZukanBox(ids, z, who) {
     : 'お手伝いが承認されたり、ボーナス・おこづかいをうけとったりするたびに、' + r.child + 'こ落ちてくるよ。') +
     'レアは' + Math.round(100000 / r.rare) + 'こに1こ、SRは' + Math.round(100000 / r.sr) + 'こに1こ。同じものを集めるとレベルアップして、絵文字→イラスト→写真に変わり、豆知識がふえるよ。';
 
-  // 確定開き（月に1回。つぎに承認されたとき、まだ持っていないレアが1こ落ちてくる。SRは対象外）
+  // ゴールデンチケット（月に1まい。好きなレアを1こえらんで、その場でもらえる。SRはえらべない）
   const cf = z.confirm || {};
-  $(ids.confirm).innerHTML = '<div class="confirm-head">🔓 確定開き <small>月に1回</small></div>' +
-    (cf.armed ? '<div class="confirm-msg on">じゅんびOK！つぎに承認されたとき、<b>まだ持っていないレア</b>がかならず落ちてくるよ。なにが出るかはおたのしみ！</div>'
-      : cf.allRares ? '<div class="confirm-msg">レアはぜんぶそろったよ！SRはじぶんの運でさがそう。</div>'
-      : cf.usedThisMonth ? '<div class="confirm-msg">今月はもう使ったよ。来月1日にまた使えるよ。</div>'
-      : '<div class="confirm-msg">つぎに承認されたとき、まだ持っていないレアが1こかならず落ちてくるよ（SRは出ないよ）。</div>' +
-        '<button class="btn btn-main" data-confirm="1">確定開きを使う</button>');
-  const b = $(ids.confirm).querySelector('[data-confirm]');
-  if (b) { b.onclick = () => useConfirm(who, b); applyCool('confirm_' + who, b); }
+  const box = $(ids.confirm);
+  box.className = 'ticket' + (cf.available ? ' ready' : ' used');
+  if (cf.available) {
+    box.innerHTML = '<div class="ticket-shine"></div><div class="ticket-row"><span class="ticket-icon">🎫</span>' +
+      '<div class="ticket-txt"><b>ゴールデンチケット</b><small>今月の1まい・すきなレアを1こえらんでゲット！</small></div>' +
+      '<span class="ticket-go">つかう ▶</span></div>';
+    box.onclick = () => useConfirm(who, box);
+  } else {
+    const p = cf.pickedThisMonth;
+    const m = Number(String(cf.nextMonth || '').slice(5, 7)) || '';
+    box.innerHTML = '<div class="ticket-row"><span class="ticket-icon">' + (p ? zItem(p).emoji : '🎫') + '</span>' +
+      '<div class="ticket-txt"><b>ゴールデンチケット つかったよ</b><small>' +
+      (cf.armed ? '前の確定開きが、つぎの承認でとどくよ' : (p ? '今月は ' + esc(zItem(p).name) + ' をえらんだよ。' : '') + (m ? m + '月1日に、つぎのチケットがとどくよ' : '来月またとどくよ')) +
+      '</small></div></div>';
+    box.onclick = p ? () => showRare(p) : null;
+  }
 }
 
 /** 子供の画面のずかんタブ */
@@ -1309,18 +1307,74 @@ async function refreshParentZukan() {
   } catch (e) { fail(e); }
 }
 
-/** 確定開き。who＝'child'（子供の画面。親が開いた子の画面ならその子）／'parent'（親が自分の分） */
+/**
+ * ゴールデンチケット。who＝'child'（子供の画面。親が開いた子の画面ならその子）／'parent'（親が自分の分）
+ * えらぶ画面：まだ持っていないレア → もっているレア（レベルアップ用）。えらんだら、その場でめくってゲット
+ */
 async function useConfirm(who, btn) {
   const key = 'confirm_' + who;
   if (isCooling(key)) return;
-  const ok = await dialog('確定開きを使う？',
-    '<p style="text-align:center;font-size:40px;margin:4px 0">🔓</p>' +
-    '<p>つぎに承認されたとき、<b>まだ持っていないレア</b>が1こ、かならず落ちてくるよ。</p>' +
-    '<div class="note">使えるのは月に1回。なにが出るかは、落ちてくるまでひみつ。SRは出ないよ。</div>', '使う');
-  if (!ok) return;
+  const col = (ZUKAN_VIEW && ZUKAN_VIEW.collection) || {};
+  const rares = ZK.items.map((it) => ZK_BY_ID[it.id]).filter((it) => it.tier < 4).sort((a, b) => b.tier - a.tier || a.no - b.no);
+  const cell = (it) => {
+    const n = col[it.id] || 0;
+    const nx = n ? zToNext(it.id, n + 1) : null;
+    const lvUp = n && zLevel(it.id, n + 1) > zLevel(it.id, n);
+    return '<button type="button" class="pick-cell t' + it.tier + '" data-p="' + it.id + '">' +
+      '<span class="pick-emoji">' + it.emoji + '</span><span class="pick-name">' + esc(it.name) + '</span>' +
+      '<span class="pick-tier">' + '★'.repeat(it.tier) + '</span>' +
+      (!n ? '<span class="pick-tag new">NEW</span>' : lvUp ? '<span class="pick-tag up">Lv' + zLevel(it.id, n + 1) + '!</span>'
+        : nx ? '<span class="pick-tag">あと' + nx.left + '</span>' : '') + '</button>';
+  };
+  const miss = rares.filter((it) => !col[it.id]);
+  const have = rares.filter((it) => col[it.id] && zLevel(it.id, col[it.id]) < 3);
+  let picked = '';
+  const p = dialog('🎫 ゴールデンチケット',
+    '<p class="pick-lead">すきなレアを <b>1こ</b> えらんでね！<br><small>えらんだものが、すぐにずかんに入るよ（SRはえらべないよ）</small></p>' +
+    (miss.length ? '<div class="pick-sec">まだ持っていない（' + miss.length + '）</div><div class="pick-grid">' + miss.map(cell).join('') + '</div>' : '') +
+    (have.length ? '<div class="pick-sec">もういっこ集めてレベルアップ</div><div class="pick-grid">' + have.map(cell).join('') + '</div>' : '') +
+    (!miss.length && !have.length ? '<p>レアはぜんぶ さいこうレベル！すごい！</p>' : ''), 'これにする！');
+  const okBtn = $('dlgOk');
+  okBtn.disabled = true;
+  $('dlgBody').querySelectorAll('.pick-cell').forEach((b) => {
+    b.onclick = () => {
+      $('dlgBody').querySelectorAll('.pick-cell.sel').forEach((x) => x.classList.remove('sel'));
+      b.classList.add('sel');
+      picked = b.dataset.p;
+      okBtn.disabled = false;
+      okBtn.textContent = zItem(picked).emoji + ' ' + zItem(picked).name + ' にする！';
+    };
+  });
+  const ok = await p;
+  okBtn.disabled = false;
+  if (!ok || !picked) return;
   cool(key, btn, 5000);
-  try { toast((await api('useConfirm', who === 'parent' ? {} : { childId: CHILD.id }, uuid())).message); } catch (e) { fail(e); }
+  try {
+    const r = await api('useConfirm', who === 'parent' ? { itemId: picked } : { childId: CHILD.id, itemId: picked }, uuid());
+    const z = r.zukan || ZUKAN_VIEW;
+    await ticketReveal(picked);
+    showCelebrate('🎫', 'ゲット！', rareLines([{ id: picked }], (z && z.collection) || {}), z);
+    if (!(CHILD && CHILD.asParent) || who === 'parent') confetti(80);
+  } catch (e) { fail(e); }
   if (who === 'parent') refreshParentZukan(); else refreshChild();
+}
+
+/** チケットがくるっとめくれて、えらんだものが出てくる演出（タップでとばせる） */
+function ticketReveal(id) {
+  const reduce = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (reduce) return Promise.resolve();
+  return new Promise((resolve) => {
+    const it = zItem(id);
+    const box = document.createElement('div');
+    box.className = 'ticket-reveal';
+    box.innerHTML = '<div class="tr-card"><div class="tr-face tr-front">🎫<small>GOLDEN TICKET</small></div>' +
+      '<div class="tr-face tr-back t' + it.tier + '"><span>' + it.emoji + '</span><b>' + esc(it.name) + '</b><small>' + '★'.repeat(it.tier) + '</small></div></div>';
+    document.body.appendChild(box);
+    let done = false;
+    const end = () => { if (done) return; done = true; box.remove(); resolve(); };
+    box.onclick = end;
+    setTimeout(end, 2300);
+  });
 }
 
 /** マスをおしたとき。持っている→レベルに合った絵・豆知識／家族だけ→シルエット／だれも→？ */

@@ -47,6 +47,11 @@ function esc(s) {
 }
 function yen(n) { return (n < 0 ? '-' : '') + Math.abs(n).toLocaleString() + '円'; }
 function signedYen(n) { return (n > 0 ? '+' : '') + yen(n); }
+/** ポイントの数（円とは別） */
+function pt(n) { return (n < 0 ? '-' : '') + Math.abs(n).toLocaleString() + 'pt'; }
+function signedPt(n) { return (n > 0 ? '+' : '') + pt(n); }
+/** 記録の金額（ポイントの記録なら pt、それ以外は円） */
+function amountText(r) { return r.kind === 'point' ? signedPt(r.amount) : signedYen(r.amount); }
 const DOW = ['日', '月', '火', '水', '木', '金', '土'];
 function fmtDateTime(iso) {
   const d = new Date(iso);
@@ -336,6 +341,9 @@ function bindStatic() {
   $('btnBackToParent').onclick = () => openParent('users');
   $('btnUsage').onclick = addUsage;
   $('btnAdjust').onclick = addAdjustment;
+  $('btnPtUse').onclick = pointUse;
+  $('btnPtAdd').onclick = pointAdd;
+  $('btnPtName').onclick = renamePoint;
   $('btnRequestUnlock').onclick = requestUnlock;
   $('btnConfirmBonus').onclick = confirmBonus;
   $('btnChoreEdit').onclick = () => { CHILD.editing = !CHILD.editing; renderChores(); };
@@ -626,7 +634,7 @@ function enterApp(info) {
 // ===================== 子供画面 =====================
 
 function openChild(childId, asParent) {
-  CHILD = { id: childId, asParent, data: null, extras: null, editing: false, calMonth: null, calSel: null };
+  CHILD = { id: childId, asParent, data: null, extras: null, points: null, editing: false, calMonth: null, calSel: null };
   show('screenChild');
   document.querySelectorAll('#screenChild .parent-only').forEach((el) => el.classList.toggle('hidden', !asParent));
   $('btnBackToParent').classList.toggle('hidden', !asParent);
@@ -665,15 +673,17 @@ async function refreshChild() {
   }
 }
 
-/** 子供の画面のタブ：ざんだか／おてつだい／カレンダー／ずかん。最後に開いたタブを端末に覚えておく */
+/** 子供の画面のタブ：ざんだか／おてつだい／カレンダー／ポイント／ずかん。最後に開いたタブを端末に覚えておく */
 function childTab(tab) {
-  if (['money', 'chore', 'cal', 'zukan'].indexOf(tab) < 0) tab = 'money';
+  if (['money', 'chore', 'cal', 'point', 'zukan'].indexOf(tab) < 0) tab = 'money';
   lsSet('okd_child_tab', tab);
   document.querySelectorAll('#screenChild .tabbar button').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
   $('childPaneMoney').classList.toggle('hidden', tab !== 'money');
   $('childPaneChore').classList.toggle('hidden', tab !== 'chore');
   $('childPaneCal').classList.toggle('hidden', tab !== 'cal');
   $('childPaneZukan').classList.toggle('hidden', tab !== 'zukan');
+  $('childPanePoint').classList.toggle('hidden', tab !== 'point');
+  if (tab === 'point' && CHILD) refreshPoints();
   if (tab === 'cal' && CHILD && CHILD.data) renderCalendar();
   if (tab === 'zukan') { $('zukanDot').classList.add('hidden'); if (CHILD && CHILD.data) renderRares(); }
 }
@@ -870,6 +880,69 @@ async function addAdjustment() {
   refreshChild();
 }
 
+// ---------- ポイント（円とは別） ----------
+
+/** ポイントタブを取り直す */
+async function refreshPoints() {
+  const id = CHILD && CHILD.id;
+  if (!id) return;
+  try {
+    const p = await api('points', { childId: id });
+    if (!CHILD || CHILD.id !== id) return;
+    CHILD.points = p;
+    renderPoints();
+  } catch (e) { fail(e); }
+}
+
+function renderPoints() {
+  const p = CHILD.points;
+  if (!p) { $('pointBalance').textContent = '-'; $('pointHistory').innerHTML = '<div class="note">よみこみ中…</div>'; return; }
+  $('pointLabel').textContent = 'いまの' + p.name;
+  $('pointBalance').textContent = pt(p.balance);
+  $('ptUseTitle').textContent = p.name + 'をつかう';
+  $('ptAddTitle').textContent = p.name + 'を足す（親だけ）';
+  $('btnPtUse').textContent = CHILD.asParent ? 'つかったことを記録する' : 'つかう申請をする';
+  $('ptUseAmount').placeholder = 'つかう数（いま ' + p.balance + '）';
+  const el = $('pointHistory');
+  el.innerHTML = p.history.length ? p.history.map((r) => itemHtml(r)).join('') : '<div class="note">まだりれきはありません。</div>';
+  if (p.history.length >= p.historyLimit) el.innerHTML += '<div class="note">最新' + p.historyLimit + '件を表示しています。</div>';
+  bindItemActions(el, p.history, refreshPoints);
+}
+
+async function pointUse() {
+  if (isCooling('ptuse')) return;
+  const amount = Math.abs(Math.round(Number($('ptUseAmount').value)));
+  const memo = $('ptUseMemo').value.trim();
+  if (!amount) { toast('つかう数を入れてね', true); return; }
+  if (CHILD.points && amount > CHILD.points.balance) { toast(CHILD.points.name + 'がたりないよ（いま ' + CHILD.points.balance + '）', true); return; }
+  cool('ptuse', $('btnPtUse'));
+  $('ptUseAmount').value = '';
+  $('ptUseMemo').value = '';
+  try { toast((await api('pointUse', { childId: CHILD.id, amount, memo }, uuid())).message); } catch (e) { fail(e); }
+  refreshPoints();
+}
+
+async function pointAdd() {
+  if (isCooling('ptadd')) return;
+  const amount = Math.round(Number($('ptAddAmount').value));
+  const memo = $('ptAddMemo').value.trim();
+  if (!amount) { toast('数を入れてください', true); return; }
+  cool('ptadd', $('btnPtAdd'));
+  $('ptAddAmount').value = '';
+  $('ptAddMemo').value = '';
+  try { toast((await api('pointAdd', { childId: CHILD.id, amount, memo }, uuid())).message); } catch (e) { fail(e); }
+  refreshPoints();
+}
+
+async function renamePoint() {
+  const cur = (CHILD.points && CHILD.points.name) || 'ポイント';
+  const ok = await dialog('ポイントの名前', '<label>名前（家族みんな共通）</label><input id="fPtName" maxlength="20" value="' + esc(cur) + '">' +
+    '<div class="note">例：ゲームポイント、おてつだいスタンプ。たまっている数はそのままです。</div>', '変更する');
+  if (!ok) return;
+  try { toast((await api('setPointName', { name: $('fPtName').value }, uuid())).message); } catch (e) { fail(e); }
+  refreshPoints();
+}
+
 async function requestUnlock() {
   if (isCooling('unlock')) return;
   cool('unlock', $('btnRequestUnlock'));
@@ -913,7 +986,7 @@ function itemHtml(r) {
       ? ' ・ ' + (r.status === 'approved' ? '承認' : '却下') + '：' + esc(r.approvedBy) : '');
   return '<div class="item st-' + esc(r.status) + '" data-id="' + esc(r.id) + '">' +
     '<div class="r1"><span>' + (r.childName ? esc(r.childName) + '：' : '') + esc(r.name) + '</span>' +
-    '<span class="' + (r.amount < 0 ? 'minus' : 'plus') + '">' + signedYen(r.amount) + '</span></div>' +
+    '<span class="' + (r.amount < 0 ? 'minus' : 'plus') + '">' + amountText(r) + '</span></div>' +
     '<div class="r2">' + fmtDateTime(r.ts) + ' ' + statusTag(r.status) + who + (r.memo ? ' ・ ' + esc(r.memo) : '') + '</div>' +
     (r.thanks && r.status === 'approved' ? '<div class="thanks">💌 ' + esc(r.thanks) + (r.approvedBy ? '<small>― ' + esc(r.approvedBy) + '</small>' : '') + '</div>' : '') +
     (acts.length ? '<div class="acts">' + acts.join('') + '</div>' : '') + '</div>';
@@ -934,7 +1007,13 @@ async function itemAction(act, r, btn, after) {
   const key = 'item_' + r.id + '_' + act; // 同じボタンの二重押しだけ防ぐ（却下→再承認はすぐできる）
   if (isCooling(key)) return;
   if (act === 'edit') return editEntry(r, after);
-  if (act === 'cancel' && !(await dialog('取り消しますか？', '<p>' + esc(r.name) + '（' + signedYen(r.amount) + '）を取り消します。</p>', '取り消す'))) return;
+  if (act === 'cancel' && !(await dialog('取り消しますか？', '<p>' + esc(r.name) + '（' + amountText(r) + '）を取り消します。</p>', '取り消す'))) return;
+  // ポイントの記録は別の操作（円の残高・ずかんには関係しない）
+  if (r.kind === 'point') {
+    cool(key, btn);
+    try { toast((await api('pointDecide', { id: r.id, op: act }, uuid())).message); } catch (e) { fail(e); }
+    return after();
+  }
   const args = { id: r.id };
   // お手伝いを承認するときは「ありがとう」を一緒に送る（えらばなければサーバーがランダムでえらぶ）
   if (act === 'approve' && r.type === 'chore') {
@@ -1622,8 +1701,11 @@ async function refreshPending() {
   try {
     const d = await api('pending');
     const pl = $('pendingList');
-    pl.innerHTML = d.pending.length ? d.pending.map((r) => itemHtml(r)).join('') : '<div class="note">今のところ承認待ちはありません。</div>';
-    bindItemActions(pl, d.pending, refreshPending);
+    // ポイントをつかう申請も同じ一覧に（「⭐ポイント名：」の印つき）。古い順
+    const pts = (d.pointPending || []).map((r) => Object.assign({}, r, { name: '⭐' + (d.pointName || 'ポイント') + '：' + r.name }));
+    const all = d.pending.concat(pts).sort((a, b) => new Date(a.ts) - new Date(b.ts));
+    pl.innerHTML = all.length ? all.map((r) => itemHtml(r)).join('') : '<div class="note">今のところ承認待ちはありません。</div>';
+    bindItemActions(pl, all, refreshPending);
     const rl = $('recentList');
     rl.innerHTML = d.history.length ? d.history.map((r) => itemHtml(r)).join('') : '<div class="note">まだありません。</div>';
     bindItemActions(rl, d.history, refreshPending);

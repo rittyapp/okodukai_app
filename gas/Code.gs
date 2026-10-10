@@ -23,6 +23,7 @@
  *   CONFIRM_USED_<ユーザーID> … v3.5.2 までの「使った月」の印。v3.5.3 からは PICKS_ だけで判定する（読まない）
  *   PICKS_<ユーザーID>        … ゴールデンチケットでえらんだもの [{ym, id, at}]。ずかんに足される（手で触らない）
  *   CONFIRM_ARMED_<ユーザーID> … v3.4 の確定開き（つぎの承認でレアが落ちる）。v3.5.3 で廃止（見つけたら消す）
+ *   POINT_NAME          … ポイントの名前（家族で1つ。既定「ポイント」）。親が子の画面のポイントタブから変更する
  *   CONFIRMED_<子供ID>  … v3.3 の確定開きの結果（v3.3 までの記録を読むためだけに使う）
  *   sess_<token>        … ログインセッション。自動で作成・削除される（手で触らない）。
  *
@@ -31,11 +32,13 @@
  *   ChoreMaster    … ChoreId / Name / BaseAmount / Active / DailyMax（家族で1日○回まで。空＝上限なし）
  *   Ledger         … 全ての記録（お金の出入り・申請・ボーナス・りそく）。残高は Status=approved の Amount 合計。
  *                    Thanks＝親が承認のときに送った「ありがとう」
+ *   Points         … ポイントの記録（円の残高・ボーナス・ずかんとは別）。Type＝add（親が足した）/ use（つかった）。
+ *                    ポイント残高は Status=approved の Amount 合計＋申請中の use（申請した時点でへらしておく）
  *   PinDeviceState … PIN入力の失敗回数・ロック状態（端末＝ブラウザ単位）。TotalFails＝これまでの失敗の合計、Hidden＝親が一覧から隠した
  */
 
 // ===================== 設定値 =====================
-const SERVER_VERSION = '3.5.3';
+const SERVER_VERSION = '3.6.0';
 
 // 公開してよい情報のみ。クライアントIDはブラウザに渡る前提の値で、秘密ではない。
 const DEFAULT_OAUTH_CLIENT_ID = '337708567191-tpqbqqinfgm5bpje56ccdj2gmkphdngi.apps.googleusercontent.com';
@@ -46,6 +49,7 @@ const SHEET_USERS = 'Users';
 const SHEET_CHORES = 'ChoreMaster';
 const SHEET_LEDGER = 'Ledger';
 const SHEET_DEVICES = 'PinDeviceState';
+const SHEET_POINTS = 'Points';
 
 const HEADERS = {
   Users: ['UserId', 'Email', 'Name', 'Role', 'Active', 'Pin'],
@@ -56,7 +60,10 @@ const HEADERS = {
   // ApprovedById … 最後に承認・却下した人のUserId（システムは system）。Drops / ParentDrops … ずかんの落下物（ずかんの説明を参照）
   Ledger: ['Id', 'Timestamp', 'ChildId', 'Type', 'ChoreId', 'ChoreName', 'Status', 'Amount', 'Memo',
     'RequestedBy', 'ApprovedBy', 'ApprovedAt', 'Hidden', 'RequestedById', 'Thanks', 'ApprovedById', 'Drops', 'ParentDrops'],
-  PinDeviceState: ['DeviceId', 'FailCount', 'LockUntil', 'HardLocked', 'UpdatedAt', 'TotalFails', 'Hidden']
+  PinDeviceState: ['DeviceId', 'FailCount', 'LockUntil', 'HardLocked', 'UpdatedAt', 'TotalFails', 'Hidden'],
+  // ポイント（円とは別のしくみ）。Amount は add がプラス（親の訂正ならマイナスも可）、use はマイナス
+  Points: ['Id', 'Timestamp', 'ChildId', 'Type', 'Name', 'Amount', 'Status', 'Memo',
+    'RequestedBy', 'RequestedById', 'ApprovedBy', 'ApprovedById', 'ApprovedAt', 'Hidden']
 };
 
 // [名前, 金額, 家族で1日○回まで]
@@ -145,6 +152,8 @@ const API = {
   addUsage: apiAddUsage_, cancelEntry: apiCancelEntry_, confirmBonus: apiConfirmBonus_,
   receiveAllowance: apiReceiveAllowance_, changeMyPin: apiChangeMyPin_,
   receiveInterest: apiReceiveInterest_, useConfirm: apiUseConfirm_,
+  points: apiPoints_, pointUse: apiPointUse_, pointDecide: apiPointDecide_,
+  pointAdd: apiPointAdd_, setPointName: apiSetPointName_,
   // 親のみ
   zukan: apiZukan_,
   pending: apiPending_, approve: apiApprove_, reject: apiReject_, editEntry: apiEditEntry_,
@@ -159,7 +168,8 @@ const WRITE_ACTIONS = {
   googleLogin: 1, pinLogin: 1, pressChore: 1, requestUnlock: 1, addUsage: 1, cancelEntry: 1, confirmBonus: 1,
   approve: 1, reject: 1, editEntry: 1, revertEntry: 1, hideEntry: 1, addAdjustment: 1, saveChore: 1,
   deleteChore: 1, upsertUser: 1, deactivateUser: 1, setAppName: 1, unlockDevice: 1, repair: 1,
-  receiveAllowance: 1, changeMyPin: 1, saveSettings: 1, hideDevice: 1, receiveInterest: 1, useConfirm: 1
+  receiveAllowance: 1, changeMyPin: 1, saveSettings: 1, hideDevice: 1, receiveInterest: 1, useConfirm: 1,
+  pointUse: 1, pointDecide: 1, pointAdd: 1, setPointName: 1
 };
 
 function doPost(e) {
@@ -361,7 +371,8 @@ function repairSheets_() {
  */
 function setupStatus_() {
   const ss = ss_();
-  const sheetsOk = Object.keys(HEADERS).every(function (name) {
+  // Points（ポイント）は使い始めたときに自動で作るので、なくても「シートが壊れている」とは見なさない
+  const sheetsOk = Object.keys(HEADERS).filter(function (name) { return name !== SHEET_POINTS; }).every(function (name) {
     const sh = ss.getSheetByName(name);
     if (!sh || sh.getLastRow() === 0) return false;
     const have = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0].map(String);
@@ -1540,6 +1551,10 @@ function apiPending_(ctx) {
     pending: rows.filter(function (r) { return r.Status === 'pending'; })
       .sort(function (a, b) { return new Date(a.Timestamp) - new Date(b.Timestamp); })
       .map(function (r) { return outRow_(r, me, names); }),
+    // ポイントをつかう申請（円とは別。画面で同じ一覧にならべる）
+    pointPending: pointRows_().filter(function (r) { return r.Status === 'pending' && !isTrue_(r.Hidden); })
+      .map(function (r) { return outPoint_(r, me, names); }),
+    pointName: pointName_(),
     // 申請中以外の記録を「記録の日付」の新しい順に、最新の数件だけ（それより前は子の画面で見る・直す）
     history: rows.filter(function (r) { return r.Status !== 'pending'; })
       .sort(byDateDesc)
@@ -1649,6 +1664,134 @@ function apiAddAdjustment_(ctx) {
     RequestedBy: me.Name, RequestedById: me.UserId, ApprovedBy: me.Name, ApprovedById: me.UserId, ApprovedAt: new Date()
   });
   return { message: '残高を調整しました。' };
+}
+
+// ===================== ポイント（円とは別。残高・ボーナス・ずかんには関係しない） =====================
+
+function pointName_() { return props_().getProperty('POINT_NAME') || 'ポイント'; }
+/** ポイントの記録。シートがまだなければ空（書くときに作る） */
+function pointRows_() {
+  if (!ss_().getSheetByName(SHEET_POINTS)) return [];
+  return readTable_(SHEET_POINTS).rows.filter(function (r) { return r.Id; });
+}
+/** 書く前に Points シートを用意する（初期設定・修復を押さなくても使えるように） */
+function ensurePointsSheet_() {
+  if (ss_().getSheetByName(SHEET_POINTS)) return;
+  const sh = ss_().insertSheet(SHEET_POINTS);
+  sh.getRange(1, 1, 1, HEADERS.Points.length).setValues([HEADERS.Points]);
+  sh.setFrozenRows(1);
+  invalidate_(SHEET_POINTS);
+}
+function findPoint_(id) {
+  const r = pointRows_().filter(function (x) { return String(x.Id) === String(id); })[0];
+  if (!r) throw new Error('対象の記録が見つかりません。');
+  return r;
+}
+/** ポイント残高：承認済み＋申請中の「つかう」（申請した時点でへらしておく） */
+function inPointBalance_(r) { return r.Status === 'approved' || (r.Status === 'pending' && r.Type === 'use'); }
+function pointBalance_(childId) {
+  return pointRows_().reduce(function (s, r) {
+    return String(r.ChildId) === String(childId) && inPointBalance_(r) ? s + (Number(r.Amount) || 0) : s;
+  }, 0);
+}
+function outPoint_(r, viewer, names) {
+  const isParent = viewer.Role === 'parent';
+  const hidden = isTrue_(r.Hidden);
+  const o = {
+    id: String(r.Id), kind: 'point', ts: toIso_(r.Timestamp), day: dayOf_(r.Timestamp), type: r.Type,
+    name: String(r.Name || (r.Type === 'use' ? 'つかった' : 'もらった')), amount: Number(r.Amount) || 0,
+    status: r.Status, memo: String(r.Memo || ''), requestedBy: String(r.RequestedBy || ''), approvedBy: String(r.ApprovedBy || ''),
+    // 子供：自分が申請した「つかう」だけ、承認される前なら取り消せる
+    canCancel: viewer.Role === 'child' && r.Status === 'pending' && String(r.ChildId) === viewer.UserId &&
+      String(r.RequestedById || '') === viewer.UserId,
+    canApprove: isParent && !hidden && (r.Status === 'pending' || r.Status === 'rejected'),
+    canReject: isParent && !hidden && (r.Status === 'pending' || r.Status === 'approved'),
+    canHide: isParent && !hidden && (r.Status === 'rejected' || r.Status === 'cancelled')
+  };
+  if (names) o.childName = names[String(r.ChildId)] || String(r.ChildId);
+  return o;
+}
+
+/** ポイントタブ：名前・残高・りれき（最新 HISTORY_LIMIT 件） */
+function apiPoints_(ctx) {
+  const me = requireUser_(ctx.token);
+  const child = targetChild_(me, ctx.args.childId);
+  const rows = pointRows_().filter(function (r) { return String(r.ChildId) === child.UserId; });
+  return {
+    name: pointName_(),
+    balance: rows.reduce(function (s, r) { return inPointBalance_(r) ? s + (Number(r.Amount) || 0) : s; }, 0),
+    history: rows.filter(function (r) { return !isTrue_(r.Hidden); }).sort(byNewest_).slice(0, historyLimit_())
+      .map(function (r) { return outPoint_(r, me); }),
+    historyLimit: historyLimit_()
+  };
+}
+
+/** ポイントをつかう。子供は申請（親が承認するまで取り消せる）、親が子の画面から記録したらそのまま承認済み */
+function apiPointUse_(ctx) {
+  const me = requireUser_(ctx.token);
+  const child = targetChild_(me, ctx.args.childId);
+  const n = Math.abs(Math.round(Number(ctx.args.amount)));
+  if (!n) throw new Error('つかう' + pointName_() + 'の数を入力してね。');
+  const bal = pointBalance_(child.UserId);
+  if (n > bal) throw new Error(pointName_() + 'がたりないよ（いま ' + bal + '）。');
+  ensurePointsSheet_();
+  const isParent = me.Role === 'parent';
+  appendRow_(SHEET_POINTS, {
+    Id: newId_(), Timestamp: new Date(), ChildId: child.UserId, Type: 'use', Name: String(ctx.args.memo || '').trim().substring(0, 40),
+    Amount: -n, Status: isParent ? 'approved' : 'pending', RequestedBy: me.Name, RequestedById: me.UserId,
+    ApprovedBy: isParent ? me.Name : '', ApprovedById: isParent ? me.UserId : '', ApprovedAt: isParent ? new Date() : ''
+  });
+  return { message: isParent ? 'きろくしました。' : '申請したよ。親が承認するまでは自分で取り消せるよ。' };
+}
+
+/** 親がポイントを足す（マイナスで訂正も可）。そのまま承認済み */
+function apiPointAdd_(ctx) {
+  const me = requireUser_(ctx.token, 'parent');
+  const child = targetChild_(me, ctx.args.childId);
+  const n = Math.round(Number(ctx.args.amount));
+  if (!n) throw new Error('数を入力してください（マイナスで減らすこともできます）。');
+  ensurePointsSheet_();
+  appendRow_(SHEET_POINTS, {
+    Id: newId_(), Timestamp: new Date(), ChildId: child.UserId, Type: 'add', Name: String(ctx.args.memo || '').trim().substring(0, 40),
+    Amount: n, Status: 'approved', RequestedBy: me.Name, RequestedById: me.UserId,
+    ApprovedBy: me.Name, ApprovedById: me.UserId, ApprovedAt: new Date()
+  });
+  return { message: pointName_() + 'を' + (n > 0 ? '足しました。' : '減らしました。') };
+}
+
+/** ポイントの記録の承認・却下・取り消し・非表示（op） */
+function apiPointDecide_(ctx) {
+  const me = requireUser_(ctx.token);
+  const r = findPoint_(ctx.args.id);
+  const o = outPoint_(r, me);
+  const op = String(ctx.args.op || '');
+  const patch = {};
+  if (op === 'cancel') {
+    if (!o.canCancel) throw new Error('この記録は取り消せません。');
+    Object.assign(patch, { Status: 'cancelled', Hidden: true });
+  } else if (op === 'approve') {
+    if (!o.canApprove) throw new Error('この記録は承認できません。');
+    Object.assign(patch, { Status: 'approved', ApprovedBy: me.Name, ApprovedById: me.UserId, ApprovedAt: new Date() });
+  } else if (op === 'reject') {
+    if (!o.canReject) throw new Error('この記録は却下できません。');
+    Object.assign(patch, { Status: 'rejected', ApprovedBy: me.Name, ApprovedById: me.UserId, ApprovedAt: new Date() });
+  } else if (op === 'hide') {
+    if (!o.canHide) throw new Error('この記録は非表示にできません。');
+    patch.Hidden = true;
+  } else {
+    throw new Error('不明な操作です。');
+  }
+  updateRow_(SHEET_POINTS, r._row, patch);
+  return { message: { cancel: '取り消しました。', approve: '承認しました。', reject: '却下しました。', hide: '非表示にしました。' }[op] };
+}
+
+/** ポイントの名前（家族で1つ） */
+function apiSetPointName_(ctx) {
+  requireUser_(ctx.token, 'parent');
+  const name = String(ctx.args.name || '').trim().substring(0, 20);
+  if (!name) throw new Error('名前を入力してください。');
+  props_().setProperty('POINT_NAME', name);
+  return { message: '名前を「' + name + '」にしました。', name: name };
 }
 
 // ===================== 設定 =====================

@@ -109,6 +109,7 @@
     <button data-tab="money" class="active">ざんだか<span class="tab-dot hidden" id="moneyDot">●</span></button>
     <button data-tab="chore">おてつだい</button>
     <button data-tab="cal">カレンダー</button>
+    <button data-tab="point">ポイント</button>
     <button data-tab="zukan">ずかん<span class="tab-dot hidden" id="zukanDot">●</span></button>
   </div>
 
@@ -187,6 +188,34 @@
       <span><b class="mk mk-wait">・</b>申請中あり</span>
     </div>
     <div id="calDetail"></div>
+  </div>
+
+  <!-- ポイント：円とは別。親が足して、子供が「つかう」を申請する（残高・ずかんには関係しない） -->
+  <div class="pane hidden" id="childPanePoint">
+    <div class="balance-card point-card">
+      <div class="balance-label" id="pointLabel">いまのポイント</div>
+      <div class="balance-amount" id="pointBalance">-</div>
+    </div>
+
+    <div class="parent-only hidden" id="pointAdminBox">
+      <div class="section-title" id="ptAddTitle">ポイントを足す（親だけ）</div>
+      <div class="form">
+        <input type="number" id="ptAddAmount" placeholder="数（マイナスで減らす）" inputmode="numeric">
+        <input type="text" id="ptAddMemo" placeholder="内容（例：テストがんばった）" maxlength="40">
+        <button class="btn btn-main" id="btnPtAdd">足す</button>
+      </div>
+      <button class="btn btn-sub" id="btnPtName">✏ ポイントの名前を変える</button>
+    </div>
+
+    <div class="section-title" id="ptUseTitle">ポイントをつかう</div>
+    <div class="form">
+      <input type="number" id="ptUseAmount" placeholder="つかう数" inputmode="numeric" min="1">
+      <input type="text" id="ptUseMemo" placeholder="なにに つかう？（例：ゲーム30分）" maxlength="40">
+      <button class="btn btn-main" id="btnPtUse">つかう申請をする</button>
+    </div>
+
+    <div class="section-title">りれき</div>
+    <div id="pointHistory"></div>
   </div>
 
   <!-- ずかん：レア落下物のずかん（10×10）・ゴールデンチケット -->

@@ -203,7 +203,7 @@ dialog h3 { margin: 0 0 8px; font-size: 17px; }
 #dlgBody label.check { display: flex; }
 
 /* ---------- 子供のタブは4つ ---------- */
-#screenChild .tabbar button { font-size: 13px; padding-left: 2px; padding-right: 2px; position: relative; white-space: nowrap; }
+#screenChild .tabbar button { font-size: 12px; padding-left: 2px; padding-right: 2px; position: relative; white-space: nowrap; }
 
 /* ---------- お手伝い：兄弟がやって「家族で1日○回まで」に達した ---------- */
 .chore-note { display: block; font-style: normal; font-size: 11px; margin-top: 3px; color: #7a5200; }
@@ -382,3 +382,9 @@ dialog h3 { margin: 0 0 8px; font-size: 17px; }
 .tr-back small { font-size: 16px; color: #e0a000; }
 @keyframes tr-flip { 0% { transform: scale(.4) rotateY(0); } 35% { transform: scale(1.1) rotateY(0); } 100% { transform: scale(1) rotateY(540deg); } }
 @media (prefers-reduced-motion: reduce) { .ticket.ready, .ticket-shine { animation: none; } }
+
+/* ポイント（円とは別） */
+.point-card { background: linear-gradient(135deg, #eaf4ff, #f3ecff); }
+.point-card .balance-amount { color: #5b5bd6; }
+#pointAdminBox .btn-sub { margin: 6px 0 4px; }
+#screenChild .tabbar { gap: 4px; }
